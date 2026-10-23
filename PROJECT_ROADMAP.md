@@ -8,16 +8,16 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 1 — 官方 Baseline 复现
-- **当前进度：** 已安装 τ²-bench v2.0.0，完成 Retail Smoke Test，以及固定任务 `0–4` 的 5 任务 Pilot Baseline。Pilot 为 `1/5` 通过、平均 Reward `0.20`，详见 [实验记录](docs/EXPERIMENT_LOG.md)；这不是完整 Retail 基准成绩。
-- **下一步：** 分析 Pilot 的失败轨迹与成本缺口，确定更大固定任务集和后续可比的 Baseline 方案。
+- **当前阶段：** 阶段 2 已完成；进入阶段 3 前的自定义 Agent 接入研究准备。
+- **当前进度：** 已完成 Retail Smoke Test、固定任务 `0–4` 的 5-task Pilot Baseline，以及官方 Agent、Retail Tool、Harness 与 Evaluation 的源码梳理。Pilot 为 `1/5` 通过、平均 Reward `0.20`，详见 [实验记录](docs/EXPERIMENT_LOG.md)；这不是完整 Retail 基准成绩。
+- **下一步：** 先确定自定义 Agent 的官方接口边界；并独立推进更大固定任务集、Task 0 对比和完整成本记录，形成可比较 Baseline。
 
 ## Milestone 总览
 
 | Milestone | 阶段 | 状态 | 完成标志 |
 | --- | --- | --- | --- |
-| M1 | 官方 Baseline 复现 | 进行中 | 已完成 5 任务 Pilot；仍需完成更大、可比较的批量评测与结果记录 |
-| M2 | Agent 架构与源码理解 | 未开始 | 梳理执行、工具与评测关键链路 |
+| M1 | 官方 Baseline 复现 | 进行中 | 已完成 5-task Pilot；仍需完成更大、可比较的批量评测与结果记录 |
+| M2 | Agent 架构与源码理解 | 已完成 | 已输出官方 Agent、Tool、Harness 与 Evaluation 调用关系笔记 |
 | M3 | 自定义 Agent 开发 | 未开始 | 首个可靠性增强版本通过验证 |
 | M4 | Evaluation 与可靠性测试 | 未开始 | 建立对比、Golden Set 与回归测试 |
 | M5 | RAG 扩展（可选） | 未开始 | 完成有对照的检索增强实验 |
@@ -39,11 +39,10 @@
 - [ ] 对比 Task 0 的单任务成功与批量失败轨迹，确认差异来源。
 - [ ] 检查 Tasks 2–4 的 T-shirt 可用变体计数与订单恢复路径。
 - [ ] 设计并执行更大固定任务集的 Baseline；单独记录任何 step-limit 变更。
-- [ ] 完整记录 Agent 与 judge 的 Token/费用，再进行成本比较。
 
 **验收标准：** 能以记录的命令和配置重复运行批量 Retail 评测；结果包含任务范围、Reward/成功率、耗时及失败案例索引。
 
-**当前状态：** Pilot 已完成；正式、可比较的更大批量 Baseline 待完成。
+**当前状态：** Pilot 已完成；正式、可比较的更大批量 Baseline 待完成。其剩余调查可与阶段 3 的接口研究并行，但任何对比实验须使用单独记录的固定配置。
 
 ## 2. Agent 架构与源码理解（必做）
 
@@ -51,16 +50,16 @@
 
 ### Checklist
 
-- [ ] 梳理 Agent 的入口、执行循环和消息状态流转。
-- [ ] 梳理 Tool Calling 的定义、参数校验和结果返回路径。
-- [ ] 梳理 Retail 环境可用工具及关键业务约束。
-- [ ] 梳理 Harness 的任务加载、运行和结果收集流程。
-- [ ] 梳理任务目标、动作检查和 Reward 计算机制。
-- [ ] 输出一份简洁的关键模块与调用关系笔记（可在 README 或后续设计文档中沉淀）。
+- [x] 梳理 Agent 的入口、执行循环和消息状态流转。
+- [x] 梳理 Tool Calling 的定义、参数校验和结果返回路径。
+- [x] 梳理 Retail 环境可用工具及关键业务约束。
+- [x] 梳理 Harness 的任务加载、运行、异常处理和结果收集流程。
+- [x] 梳理任务目标、动作检查和 Reward 计算机制。
+- [x] 输出关键模块与调用关系笔记：[架构笔记](docs/ARCHITECTURE_NOTES.md)。
 
 **验收标准：** 可说明一个 Retail 任务从加载、Agent 工具调用到动作检查和 Reward 产出的路径，并能定位对应官方代码模块。
 
-**当前状态：** 未开始（仅初步分析过单个任务轨迹）。
+**当前状态：** 已完成。结论限于官方 v2.0.0 的已检查路径；自定义实现方案仍留待阶段 3 验证。
 
 ## 3. 自定义 Agent 开发（必做）
 
@@ -150,5 +149,6 @@
 | 记录 | 内容 | 状态 |
 | --- | --- | --- |
 | [实验记录](docs/EXPERIMENT_LOG.md) | 2026-10-22 Retail 5-task Pilot Baseline：配置、结果、失败分析与成本边界 | 已创建 |
+| [架构笔记](docs/ARCHITECTURE_NOTES.md) | 阶段 2：官方 v2.0.0 的 Agent、Retail Tool、Harness 与 Evaluation 技术参考 | 已创建 |
 
 > 新实验应在该索引对应记录中注明日期、代码版本/配置、任务范围、指标和结论；尚未创建该文件前，此链接仅作为后续约定。
