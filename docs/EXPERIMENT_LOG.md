@@ -167,3 +167,92 @@ artifact 的 `info.agent_info.implementation` 为 `ecommerce_after_sales_v0`，�
 V0 已有一条 Smoke Test；V1 尚无结果。后续每次个人 Agent 实验应另起记录，明确：代码版本、Agent 版本（V0 / V1）、与官方 Baseline 是否使用相同 task set / model / parameters / evaluation rule、开发调试或独立评估用途、trial / seed、Reward / Pass^k、Tool error、延迟、Token 与可获得的 API cost。
 
 若 V1 使用可靠性机制，应同时记录对应的测试、失败案例和局限性；不得把开发调试任务或单次结果表述为独立性能提升。
+
+## 2026-10-23 — V0 Retail 5-task Pilot
+
+### 范围与可比性
+
+- **状态：** 已完成；这是个人 `ecommerce_after_sales_v0` 的首次 **5-task Pilot**，不是完整 Retail benchmark，也不是已证明的性能提升。
+- **官方环境：** `../tau2-bench/` 已核验为 `v2.0.0`，commit `989d3285ae669e49503324bdb9981bf14fccedeb`；Domain 为 `retail` / `en`、默认 task set、`base` split。
+- **Agent / User：** `ecommerce_after_sales_v0` / `user_simulator`；双方均为 `openai/gpt-4.1-mini`、`{"temperature": 0.0}`。
+- **任务与运行限制：** Tasks `0–4`、`num_trials=1`、`seed=42`、`max_steps=30`、`max_errors=10`、`max_concurrency=1`、`workers=0`、`max_retries=0`、`timeout=null`、`auto_review=false`。
+- **其他运行设置：** `verbose_logs=true`、LLM log mode `all`；默认 semantic `communicate_scoring` 配置为 `gpt-5.5` / low reasoning。结果中 `communicate_checks` 都为空，不能据此断言该 Judge 实际未调用。
+- **原始 artifact：** `../tau2-bench/data/simulations/retail-v0-pilot-0-4/results.json`；其中 `agent_info.implementation=ecommerce_after_sales_v0`，确认使用的是个人 V0 Agent。artifact 的 `git_commit=3ff6f310…` 是运行时个人项目目录的 provenance，不是官方源码版本。
+
+本次运行入口为：
+
+```bash
+PYTHONPATH=src ../tau2-bench/.venv/bin/python \
+  -m ecommerce_after_sales_agent.retail_pilot --run
+```
+
+对照 artifact 为 `../tau2-bench/data/simulations/retail-baseline-0-4/results.json`。与 2026-10-22 官方 Pilot 相比，任务、split、模型、temperature、seed、step/error/retry/concurrency 限制和评测规则一致。设计上必要的差异是 Agent 实现、process-local 注册/程序入口和新的 `save_to` 目录；二者的 `verbose_logs` 与 LLM log mode 均为 `all`。因此可作初步行为对比，但单 trial、5 个 task 不足以隔离模型输出随机性或证明 Agent 优劣。
+
+### 逐任务对比
+
+| Task | V0 Reward / Termination | 官方 Reward / Termination | V0 DB / Action / NL | 官方 DB / Action / NL | V0 / 官方耗时 |
+| --- | --- | --- | --- | --- | ---: |
+| 0 | `1.0` / `user_stop` | `0.0` / `user_stop` | `1.0` / `5/5` / 无 assertion | `0.0` / `4/5` / 无 assertion | 30.19 / 25.22 s |
+| 1 | `1.0` / `user_stop` | `1.0` / `user_stop` | `1.0` / `5/5` / 无 assertion | `1.0` / `5/5` / 无 assertion | 16.52 / 17.80 s |
+| 2 | `0.0` / `max_steps` | `0.0` / `user_stop` | 未评分 / 未评分 / 未评分 | `0.0` / `3/11` / `0/1` | 23.61 / 27.28 s |
+| 3 | `0.0` / `user_stop` | `0.0` / `max_steps` | `1.0` / `11/12` / `0/1` | 未评分 / 未评分 / 未评分 | 19.15 / 24.34 s |
+| 4 | `0.0` / `user_stop` | `0.0` / `user_stop` | `1.0` / `12/13` / `0/1` | `1.0` / `12/13` / `0/1` | 26.81 / 24.27 s |
+
+**V0 通过数为 2/5、平均 Reward 为 0.40；官方 Pilot 为 1/5、0.20。** 两个数均只来自同一固定 task set 的一个 trial，不可描述为稳定提升或完整基准成绩。Action Checks 是诊断指标；本组任务的 `reward_basis` 为 `DB + NL_ASSERTION`，且 premature termination 会绕过正常评测。
+
+### Task 2–4 trajectory 事实与分析
+
+以下内容来自保存的 messages、Tool Result 与 `reward_info`；不复制客户资料、订单号、item ID 或完整对话。
+
+#### Task 2 — write 成功但在 step cap 处提前终止
+
+**已确认事实**
+
+- V0 trace 共 31 条 messages。它完成 authentication、商品类型/商品详情查询、profile 查询、5 次**依次**的 `get_order_details`，然后完成确认和 `return_delivered_order_items`。
+- 该 return Tool Result 为成功（无 Tool Error），且 Agent 随后发送完成回复；但 Simulation 的 `termination_reason=max_steps`，`reward_info` 明确标为 premature termination，DB、Action Checks 与 NL Assertions 都没有执行。
+- 五次单独 order read 连同各自 Tool Result 占 10 条 messages；再加上前置 read、确认和用户往返，是本次 30-step budget 的主要交互消耗。
+
+**与官方的对比与解释边界**
+
+- 官方同题也把可用 T-shirt 数说为 12；之后跟随用户给出的不存在订单号，两批查询均得到 Tool Error，最终 transfer，正常进入评测但 return write/DB/NL 均失败。
+- V0 改从已认证 profile 中查询账户订单，找到了可处理订单并成功写入；这解释了两条 trace 的路径差异，但由于 V0 未通过正常终止，不能把成功 Tool Result 当作该任务成功或性能提升。
+- step 计数的精确内部规则需以 Harness 代码和更小的可复现实验验证；artifact 足以确认的是：该任务在配置的 cap 处终止，而非 Tool Error 导致终止。
+
+#### Task 3 — 未给出明确的 10
+
+**已确认事实**
+
+- V0 完成 write，DB Check 为 `1.0`，随后正常 `user_stop`；但其面对“exactly how many”时只说 T-shirt 有多个 variants，未说出数值。保存的 NL verdict 因未给出 `10` 而失败。
+- V0 只缺一项诊断性 Action Check（`11/12`）；其余 action 与 DB 状态通过。该 action 指标不在本任务的 reward basis。
+- 官方在相同任务中完成 write 后，用户再次询问数量时回答 `12`，随后触发 `max_steps`，因此也未得到正常评分。
+
+**结论**
+
+两种 Agent 都没有把 Product Tool Result 中的 availability 过滤结果可靠地转成所需事实；V0 此次是遗漏数值，官方此次是错误总数。不能仅由这一条 trace 判定是 Prompt、上下文顺序还是模型决策的唯一根因。
+
+#### Task 4 — 将总 variants 数误作 available 数
+
+**已确认事实**
+
+- V0 从 T-shirt Product Tool Result 得到 12 个 variants，其中 **10 个 `available=true`、2 个 `available=false`**；随后对用户回答“12”。这是总 variants 计数，而非可用 variants 计数。
+- 两个 pending-order write 均成功，DB Check 为 `1.0`，Action Checks 为 `12/13`；但 NL verdict 明确指出应答 `10`，所以 `NL_ASSERTION=0`、最终 Reward 为 `0.0`。
+- 官方本题也完成相同 DB/action 结果，但只回答“several options”，同样未满足数字 assertion。
+
+**结论**
+
+这不是 Tool 返回 unavailable variants 错误：artifact 直接显示了 12 / 10 / 2 的数据结构。已确认的问题是 Agent 对 Tool Result 的 availability-aware counting/事实表达不可靠；尚不能仅据此把根因归为某个单独 Prompt 文本。
+
+### 实现与行为差异、成本局限
+
+- **实现边界：** V0 是个人实现的 `HalfDuplexAgent`，自管 system prompt 与 message history，并调用官方 `generate()`；官方 `llm_agent` 是官方实现。两者都把 Tool Call 交由官方 Harness / Environment 执行。
+- **观察到的行为：** V0 在 Task 2 从 authenticated profile 发现订单，而官方反复查询用户提供的无效 ID；V0 在 Task 3 将五个 order reads 作为一批 Tool Call，官方 trace 则逐次调用。这些是本次 trace 事实，不足以概括所有任务的稳定行为。
+- **共同失败模式：** 两者在含 T-shirt 数量 assertion 的任务中都未基于 `available=true` 得出/表达正确的 10；Task 4 的 DB write 都正确而 NL assertion 失败。
+- **V0 特有的本次问题：** Task 2 在实际 write 后耗尽 step budget；Task 3 未给出任何明确数量；Task 4 给出总数 12。官方特有的本次 Task 2 路径是无效订单号重试后 transfer，Task 3 是在回答 12 后达 step cap。
+- **费用/Token：** V0 保存的 User Cost 总和为 **$0.0089176**；各任务 `agent_cost=null`、`agent_usage=null`，结果中没有 User token usage 字段，也没有独立 Judge token/cost 字段。这些缺失不等于相应成本为零。Tasks 3、4 的 NL verdict 是存在 NL judging 的实际证据；`communicate_checks` 均为空，`auto_review=false` 且 `review=null`，故没有保存的 semantic communication Judge verdict 或 auto-review 成本证据。
+
+### 阶段 3B 的证据驱动优先级（尚未实现）
+
+1. **Grounded factual response / availability-aware aggregation。** 在 Agent 准备陈述 inventory count 前，按 Tool Result 的结构化 `available` 字段计算并验证，而不是让 LLM 凭总 variants 或模糊措辞回答。测试应使用合成的 Product Tool Result（含不同总数和不可用 variants），断言 Agent 对可用数的自然语言结论正确；再以 Task 2–4 类场景做回归测试，避免写死“10”。
+2. **Step-budget-aware planning and completion。** 维护可见的剩余 interaction budget，避免在多实体售后流程中消耗完 budget 后才发出最终回复或完成写入。测试应使用 Mock Harness/message sequence 模拟接近 cap 的多订单流程，验证 Agent 记录 budget、减少非必要轮次并在成功 Tool Result 后优先给出完成回复；不得改变官方 step cap 后把结果混作本对照实验。
+
+这两项建议都来自当前 Pilot 的失败证据；尚未实现、尚无 V1 对照成绩。Tool Error recovery 虽值得后续研究，但 V0 本次没有 Tool Error，不应排在本轮 V1 的证据优先级之前。
