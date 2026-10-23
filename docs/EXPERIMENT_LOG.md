@@ -117,3 +117,9 @@ uv run tau2 run \
 - [ ] 为提高 Task 3 step limit 的实验单独制定并记录配置。
 - [ ] 在进行 cost comparison 前，建立完整的 Agent 和 judge Token/cost capture。
 - [ ] 定义更大的固定 task set 并重复 baseline trials，再报告更广泛的 Retail performance number。
+
+### 后续 V0 / V1 实验记录约定
+
+阶段 3 尚未开始，当前没有 V0 或 V1 的结果。后续每次个人 Agent 实验应另起记录，明确：代码版本、Agent 版本（V0 / V1）、与官方 Baseline 是否使用相同 task set / model / parameters / evaluation rule、开发调试或独立评估用途、trial / seed、Reward / Pass^k、Tool error、延迟、Token 与可获得的 API cost。
+
+若 V1 使用可靠性机制，应同时记录对应的测试、失败案例和局限性；不得把开发调试任务或单次结果表述为独立性能提升。

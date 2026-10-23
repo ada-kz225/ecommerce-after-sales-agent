@@ -113,8 +113,22 @@ Task Success 使用 `reward ≈ 1.0` 判定（`../tau2-bench/src/tau2/metrics/ag
 
 值得继续研究的是：如何让 Agent 将 Tool error 结构化进入 state、避免重复失败调用、维护写操作状态、分配剩余 step budget，并在停止前核验任务目标。这些是研究方向，不是对官方实现缺陷的定论。
 
-## 7. 阶段 3：自定义 Agent 接入（待研究）
+## 7. 阶段 3：自主 Agent 接入（待研究）
 
-阶段 3 将以 `build_agent()`、registry factory 和 `LLMAgent` 的 message / Tool 接口为入口，确认自定义 Agent 所需的最小协议、状态持久化方式、Tool schema 兼容性、停止语义及评测可复现性。
+### 已确认的接入边界
 
-本阶段**不预设**具体 Agent 架构、Prompt、memory、planner 或 retry 策略；应在固定 task set 与独立实验记录下逐项验证。
+官方 `HalfDuplexAgent`（`../tau2-bench/src/tau2/agent/base_agent.py:52-86`）要求 Agent 接收 `UserMessage` / `ToolMessage` / `MultiToolMessage`，产生 `AssistantMessage`，并实现 `get_init_state()` 与 `generate_next_message()`。factory 的最小签名为 `factory(tools, domain_policy, **kwargs) -> agent`（`../tau2-bench/src/tau2/registry.py:112-140`）；`build_agent()` 从 Environment 提供 `tools` 和 policy（`../tau2-bench/src/tau2/runner/build.py:100-175`）。
+
+这界定了职责：个人 Agent 自主负责 Prompt、state、LLM 调用和下一步决策；官方 Orchestrator 继续负责 User / Agent / Environment 路由及 Tool Call 的转交；官方 Retail Environment / Tools 继续负责实际业务执行与校验；官方 Evaluator 继续负责评分。V0 不应在 Agent 内重复实现这些 Harness / Environment 职责。
+
+### 3A：最小 Agent（V0）
+
+官方 `../tau2-bench/examples/agents/minimal_text_agent.py` 是最小接口参考：它定义独立 state、调用 `generate()`、提供 factory，并在同一 Python process 中用 `registry.register_agent_factory()` 注册。V0 将参考该契约，但自行实现 Agent 核心，而不直接复制完整官方 `LLMAgent`。
+
+待确认的问题：独立项目如何加载该 factory 并被官方 CLI / runner 发现、factory 实际需要接收哪些配置参数、以及最小 state 如何同时兼容 Tool Result 与 message history。上述方式在当前项目中尚未实现或验证。
+
+V0 的首要验证应是：不依赖付费 API 的接口/单元测试，以及一条单独记录的 Retail Smoke Test；后者只证明接入可运行，不证明性能优于官方 Baseline。
+
+### 3B：可靠性增强（V1）
+
+仅在 V0 可运行后，结合 Task 0、2、3、4 等真实失败现象，选择少量可测试机制，例如 Tool Error 结构化恢复、重复失败调用的合理终止、写操作前 confirmation / permission 检查、写后状态验证，或 step budget / 最终回复完整性检查。每项机制及其收益均待实验验证；不预设必须使用 LangGraph，也不将单次评测视为性能结论。
