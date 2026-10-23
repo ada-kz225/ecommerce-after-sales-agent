@@ -1,0 +1,22 @@
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]
+
+# Test and coverage outputs
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local virtual environments and build artifacts
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# Local configuration that may contain credentials
+.env
+.env.*
+!.env.example
