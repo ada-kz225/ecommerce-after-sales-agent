@@ -1,3 +1,11 @@
+[project]
+name = "ecommerce-after-sales-agent"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

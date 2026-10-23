@@ -129,7 +129,7 @@ Task Success 使用 `reward ≈ 1.0` 判定（`../tau2-bench/src/tau2/metrics/ag
 
 仍待确认的问题：外部 `tau2` CLI 如何自动导入个人项目并完成注册、以及真实 V0 factory 需要如何处理完整的运行配置。官方 registry 是 process-local，因此不能把当前 entry point 的注册误解为跨 process 的永久 CLI 注册。
 
-V0 的首要验证应是：不依赖付费 API 的接口/单元测试，以及一条单独记录的 Retail Smoke Test；后者只证明接入可运行，不证明性能优于官方 Baseline。
+个人项目现已用 Mock 对 V0 的 Prompt/state、官方 `generate()` 调用参数、文本与 Tool Call 返回、Tool Result history、factory / registry / Builder 做无 API 测试。仍需一条单独记录的 Retail Smoke Test；该测试只证明真实接入可运行，不证明性能优于官方 Baseline。
 
 ### 3B：可靠性增强（V1）
 

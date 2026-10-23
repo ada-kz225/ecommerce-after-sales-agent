@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 2 已完成；阶段 3A 已完成最小接入契约验证，V0 核心逻辑尚未实现。
+- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 核心已完成 Mock 接口测试，尚未进行真实 API 或 Retail Smoke Test。
 - **当前进度：** 已完成 Retail Smoke Test、固定任务 `0–4` 的 5-task Pilot Baseline，以及官方 Agent、Retail Tool、Harness 与 Evaluation 的源码梳理。Pilot 为 `1/5` 通过、平均 Reward `0.20`，详见 [实验记录](docs/EXPERIMENT_LOG.md)；这不是完整 Retail 基准成绩。
-- **下一步：** 实现 V0 的真实 Prompt、state、LLM 调用与 Tool Call 决策；不要先实现 V1 的可靠性增强。
+- **下一步：** 在单独记录的、成本受控的配置下完成 V0 Retail Smoke Test；不要先实现 V1 的可靠性增强。
 
 ## Milestone 总览
 
@@ -74,10 +74,10 @@
 
 - [x] 核实并记录 `HalfDuplexAgent` 接口、Agent State、消息类型、factory 与 registry 的最小契约。
 - [x] 验证独立仓库通过 Python entry point 进行 process-local registry 注册，并由官方 `build_agent()` 构建自定义 Agent；外部 CLI 的自动加载方式仍未验证。
-- [ ] 自主设计并实现 V0 的 Prompt 构造、消息状态管理、LLM 调用、Tool Call / Tool Result 接收和下一步决策。
-- [ ] 保持官方 `AssistantMessage`、Tool schema 与 history 协议兼容；复用官方 LLM 调用封装，避免重复开发基础设施。
-- [ ] 明确 Agent 与 Harness 的边界：Agent 产生消息/决策，官方 Harness 负责角色调度，官方 Environment / Tools 负责实际执行。
-- [ ] 编写不依赖付费 API 的接口与单元测试。
+- [x] 自主实现 V0 的 Prompt 构造、消息状态管理、官方 `generate()` 调用、Tool Call / Tool Result 接收和下一步决策；当前仅以 Mock 验证。
+- [x] 保持官方 `AssistantMessage`、Tool schema 与 history 协议兼容；复用官方 LLM 调用封装，避免重复开发基础设施。
+- [x] 明确 Agent 与 Harness 的边界：Agent 产生消息/决策，官方 Harness 负责角色调度，官方 Environment / Tools 负责实际执行。
+- [x] 编写不依赖付费 API 的接口与单元测试。
 - [ ] 以一个 Retail task 完成 V0 Smoke Test，并单独记录配置和结果。
 
 **验收标准：** V0 可被官方文本 Harness 构建和运行；至少有接口/单元测试证明消息与 Tool schema 兼容，并有一条独立记录的 Retail Smoke Test。该 Smoke Test 不作为性能结论。
@@ -95,7 +95,7 @@
 
 **验收标准：** V1 的每项增强有可运行测试；对照实验不将单次随机结果表述为稳定提升。
 
-**当前状态：** 3A 的固定响应 Agent 已完成无 API 接入验证，尚未实现真实 LLM Tool Calling 或 Retail Smoke Test；3B 未开始。
+**当前状态：** 3A 的固定响应 Agent 与 V0 Mock 接口测试均已完成；V0 尚未进行真实 API 或 Retail Smoke Test；3B 未开始。
 
 ## 4. Evaluation 与可靠性测试（必做）
 
