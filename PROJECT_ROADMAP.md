@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 2 已完成；阶段 3 尚未开始实现，当前准备 3A 的接口确认与最小架构设计。
+- **当前阶段：** 阶段 2 已完成；阶段 3A 已完成最小接入契约验证，V0 核心逻辑尚未实现。
 - **当前进度：** 已完成 Retail Smoke Test、固定任务 `0–4` 的 5-task Pilot Baseline，以及官方 Agent、Retail Tool、Harness 与 Evaluation 的源码梳理。Pilot 为 `1/5` 通过、平均 Reward `0.20`，详见 [实验记录](docs/EXPERIMENT_LOG.md)；这不是完整 Retail 基准成绩。
-- **下一步：** 确认 V0 的官方接口、独立仓库注册方式与最小 Agent 架构；不要先实现 V1 的可靠性增强。
+- **下一步：** 实现 V0 的真实 Prompt、state、LLM 调用与 Tool Call 决策；不要先实现 V1 的可靠性增强。
 
 ## Milestone 总览
 
@@ -18,7 +18,7 @@
 | --- | --- | --- | --- |
 | M1 | 官方 Baseline 复现 | 进行中 | 已完成 5-task Pilot；仍需完成更大、可比较的批量评测与结果记录 |
 | M2 | Agent 架构与源码理解 | 已完成 | 已输出官方 Agent、Tool、Harness 与 Evaluation 调用关系笔记 |
-| M3 | 自主 Agent 开发 | 未开始实现 | V0 可接入并完成 Smoke Test；V1 的少量增强有测试证据 |
+| M3 | 自主 Agent 开发 | 进行中 | 已验证最小接入契约；V0 可接入并完成 Smoke Test；V1 的少量增强有测试证据 |
 | M4 | Evaluation 与可靠性测试 | 未开始 | 建立对比、Golden Set 与回归测试 |
 | M5 | RAG 扩展（可选） | 未开始 | 完成有对照的检索增强实验 |
 | M6 | Observability | 未开始 | 可查询的端到端 Trace 与成本指标 |
@@ -72,8 +72,8 @@
 
 #### Checklist
 
-- [ ] 核实并记录 `HalfDuplexAgent` 接口、Agent State、消息类型、factory 与 registry 的最小契约。
-- [ ] 确认独立仓库中加载/注册自定义 Agent 并由官方 Harness 启动的方式；未验证前不假定可直接通过官方 CLI 名称发现。
+- [x] 核实并记录 `HalfDuplexAgent` 接口、Agent State、消息类型、factory 与 registry 的最小契约。
+- [x] 验证独立仓库通过 Python entry point 进行 process-local registry 注册，并由官方 `build_agent()` 构建自定义 Agent；外部 CLI 的自动加载方式仍未验证。
 - [ ] 自主设计并实现 V0 的 Prompt 构造、消息状态管理、LLM 调用、Tool Call / Tool Result 接收和下一步决策。
 - [ ] 保持官方 `AssistantMessage`、Tool schema 与 history 协议兼容；复用官方 LLM 调用封装，避免重复开发基础设施。
 - [ ] 明确 Agent 与 Harness 的边界：Agent 产生消息/决策，官方 Harness 负责角色调度，官方 Environment / Tools 负责实际执行。
@@ -95,7 +95,7 @@
 
 **验收标准：** V1 的每项增强有可运行测试；对照实验不将单次随机结果表述为稳定提升。
 
-**当前状态：** 3A、3B 均未开始实现；下一步仅为 3A 的接口确认与最小架构设计。
+**当前状态：** 3A 的固定响应 Agent 已完成无 API 接入验证，尚未实现真实 LLM Tool Calling 或 Retail Smoke Test；3B 未开始。
 
 ## 4. Evaluation 与可靠性测试（必做）
 

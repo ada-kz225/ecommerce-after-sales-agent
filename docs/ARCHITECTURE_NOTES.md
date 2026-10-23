@@ -125,7 +125,9 @@ Task Success 使用 `reward ≈ 1.0` 判定（`../tau2-bench/src/tau2/metrics/ag
 
 官方 `../tau2-bench/examples/agents/minimal_text_agent.py` 是最小接口参考：它定义独立 state、调用 `generate()`、提供 factory，并在同一 Python process 中用 `registry.register_agent_factory()` 注册。V0 将参考该契约，但自行实现 Agent 核心，而不直接复制完整官方 `LLMAgent`。
 
-待确认的问题：独立项目如何加载该 factory 并被官方 CLI / runner 发现、factory 实际需要接收哪些配置参数、以及最小 state 如何同时兼容 Tool Result 与 message history。上述方式在当前项目中尚未实现或验证。
+已验证的最小链路是：个人项目的 Python entry point 在当前 process 调用 `registry.register_agent_factory()`，随后官方 `build_agent()` 能发现 factory 并构建 Agent；测试也覆盖了 `UserMessage`、`ToolMessage` 和 `MultiToolMessage` 的 state 更新。该验证不启动 Simulation，也不调用 API。
+
+仍待确认的问题：外部 `tau2` CLI 如何自动导入个人项目并完成注册、以及真实 V0 factory 需要如何处理完整的运行配置。官方 registry 是 process-local，因此不能把当前 entry point 的注册误解为跨 process 的永久 CLI 注册。
 
 V0 的首要验证应是：不依赖付费 API 的接口/单元测试，以及一条单独记录的 Retail Smoke Test；后者只证明接入可运行，不证明性能优于官方 Baseline。
 
