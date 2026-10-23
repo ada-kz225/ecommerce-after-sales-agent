@@ -118,8 +118,52 @@ uv run tau2 run \
 - [ ] 在进行 cost comparison 前，建立完整的 Agent 和 judge Token/cost capture。
 - [ ] 定义更大的固定 task set 并重复 baseline trials，再报告更广泛的 Retail performance number。
 
+## 2026-10-23 — V0 Retail Task 0 End-to-end Smoke Test
+
+### 范围与配置
+
+- **目的：** 验证个人仓库的 `ecommerce_after_sales_v0` 能通过官方 Harness 完成一次真实 Retail 任务；这是一条 Smoke Test，不是性能比较或批量基准。
+- **官方源码：** 当前 `../tau2-bench/` 为 `v2.0.0`，commit `989d3285ae669e49503324bdb9981bf14fccedeb`。
+- **Agent / User：** `ecommerce_after_sales_v0` / `user_simulator`；双方均为 `openai/gpt-4.1-mini`，`{"temperature": 0.0}`。
+- **任务与限制：** Retail Task `0`、`base` split、`seed=42`、`num_trials=1`、`max_steps=30`、`max_errors=10`、`max_retries=0`、`max_concurrency=1`、`workers=0`、`auto_review=false`。
+- **原始结果：** `../tau2-bench/data/simulations/retail-v0-smoke-task0/results.json`。
+
+artifact 的 `info.agent_info.implementation` 为 `ecommerce_after_sales_v0`，确认实际使用的是个人 V0 Agent。该 artifact 的 `info.git_commit` 是 `e5df92d…`；官方 `get_commit_hash()` 读取运行时当前目录的 Git commit，因此它记录的是个人项目 provenance，不应当作官方 τ²-bench commit。官方版本以上述单独核验的 `989d3285` 为准。
+
+### 结果与真实执行链路
+
+| 指标 | 已确认结果 |
+| --- | --- |
+| Reward | `1.0` |
+| DB Check | `1.0`（`db_match=true`） |
+| Action Checks | `5/5` 全部通过 |
+| Duration | `28.26 s` |
+| Termination | `user_stop` |
+| trajectory | 20 条 message；全部 Tool Result 的 `error=false` |
+
+保存的 trajectory 证实实际链路为：V0 Agent 先发起 authentication、order/product 查询等 Tool Call；官方 Environment 返回 Tool Result；V0 Agent 继续基于结果决策；最后发起 `exchange_delivered_order_items`，Environment 成功返回写入结果，Agent 再向 User 完成回复。该结论只描述组件交互和成功结果，不复制客户标识、订单号、地址或完整对话。
+
+### 与官方 `llm_agent` Task 0 Smoke Test 的简要对比
+
+此前官方 Smoke artifact 为 `../tau2-bench/data/simulations/retail-smoke-001/results.json`，Agent 为 `llm_agent`，同为 Task `0`、`gpt-4.1-mini`、`temperature=0.0`、`seed=42`、`max_steps=30`。
+
+| 项目 | 官方 `llm_agent` Smoke | 个人 V0 Smoke |
+| --- | ---: | ---: |
+| Reward / DB Check / Action Checks | `1.0` / `1.0` / `5/5` | `1.0` / `1.0` / `5/5` |
+| Duration | `24.52 s` | `28.26 s` |
+| Tool Call | 4 个 required read + 1 个 exchange write | 相同 5 个 required calls，另有 1 个 `get_user_details` read |
+
+两者都完成该单次任务；V0 多一次 read 且本次耗时更长约 `3.74 s`。单个 task、单个 trial 不能用于推断 V0 的性能优势、稳定性或成本优势。
+
+### Cost 与未覆盖范围
+
+- 保存的 `user_cost` 为 `$0.0020748`（约 `$0.0021`），只是 User Simulator 的已记录费用，**不是总费用**。
+- `agent_cost` 为 `null`，不表示 V0 Agent 费用为零；artifact 没有独立完整的 Agent / Judge Token 与费用总计。
+- 此任务没有 NL assertions，`communicate_checks` 为空；保存结果没有独立 Judge verdict/cost。不得据此推断所有后续任务不存在 Judge 费用。
+- 本次证明 V0 的一次端到端 Harness / Environment / Evaluator 接入可运行；尚未覆盖批量任务、重复 trial、外部 CLI 自动加载、完整成本 capture 或任何 V1 可靠性增强。
+
 ### 后续 V0 / V1 实验记录约定
 
-阶段 3 尚未开始，当前没有 V0 或 V1 的结果。后续每次个人 Agent 实验应另起记录，明确：代码版本、Agent 版本（V0 / V1）、与官方 Baseline 是否使用相同 task set / model / parameters / evaluation rule、开发调试或独立评估用途、trial / seed、Reward / Pass^k、Tool error、延迟、Token 与可获得的 API cost。
+V0 已有一条 Smoke Test；V1 尚无结果。后续每次个人 Agent 实验应另起记录，明确：代码版本、Agent 版本（V0 / V1）、与官方 Baseline 是否使用相同 task set / model / parameters / evaluation rule、开发调试或独立评估用途、trial / seed、Reward / Pass^k、Tool error、延迟、Token 与可获得的 API cost。
 
 若 V1 使用可靠性机制，应同时记录对应的测试、失败案例和局限性；不得把开发调试任务或单次结果表述为独立性能提升。
