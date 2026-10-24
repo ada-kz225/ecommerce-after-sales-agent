@@ -250,9 +250,30 @@ PYTHONPATH=src ../tau2-bench/.venv/bin/python \
 - **V0 特有的本次问题：** Task 2 在实际 write 后耗尽 step budget；Task 3 未给出任何明确数量；Task 4 给出总数 12。官方特有的本次 Task 2 路径是无效订单号重试后 transfer，Task 3 是在回答 12 后达 step cap。
 - **费用/Token：** V0 保存的 User Cost 总和为 **$0.0089176**；各任务 `agent_cost=null`、`agent_usage=null`，结果中没有 User token usage 字段，也没有独立 Judge token/cost 字段。这些缺失不等于相应成本为零。Tasks 3、4 的 NL verdict 是存在 NL judging 的实际证据；`communicate_checks` 均为空，`auto_review=false` 且 `review=null`，故没有保存的 semantic communication Judge verdict 或 auto-review 成本证据。
 
-### 阶段 3B 的证据驱动优先级（尚未实现）
+### 阶段 3B 的证据驱动优先级（2026-10-23；当时尚未实现）
 
 1. **Grounded factual response / availability-aware aggregation。** 在 Agent 准备陈述 inventory count 前，按 Tool Result 的结构化 `available` 字段计算并验证，而不是让 LLM 凭总 variants 或模糊措辞回答。测试应使用合成的 Product Tool Result（含不同总数和不可用 variants），断言 Agent 对可用数的自然语言结论正确；再以 Task 2–4 类场景做回归测试，避免写死“10”。
 2. **Step-budget-aware planning and completion。** 维护可见的剩余 interaction budget，避免在多实体售后流程中消耗完 budget 后才发出最终回复或完成写入。测试应使用 Mock Harness/message sequence 模拟接近 cap 的多订单流程，验证 Agent 记录 budget、减少非必要轮次并在成功 Tool Result 后优先给出完成回复；不得改变官方 step cap 后把结果混作本对照实验。
 
-这两项建议都来自当前 Pilot 的失败证据；尚未实现、尚无 V1 对照成绩。Tool Error recovery 虽值得后续研究，但 V0 本次没有 Tool Error，不应排在本轮 V1 的证据优先级之前。
+这两项建议都来自当前 Pilot 的失败证据。当时尚未实现、尚无 V1 对照成绩；Availability-aware Factual Grounding 的后续 Mock 工程验证见下一节。Tool Error recovery 虽值得后续研究，但 V0 本次没有 Tool Error，不应排在本轮 V1 的证据优先级之前。
+
+## 2026-10-24 — V1 Availability-aware Factual Grounding 工程回归
+
+### 范围与缺陷发现
+
+- **范围：** 对 `ecommerce_after_sales_v1` 的结构化 inventory fact state 做本地 Mock 回归；不调用 API、不运行 Retail Simulation、不修改官方 τ²-bench 或 V0 实验结果。
+- **发现方式：** 代码审查发现旧实现将每个成功 Product Tool Result 的 fact 用 `list.extend()` 追加到 state。新增回归测试后，旧实现出现 **4 项失败**：同一 `product_id` 的旧统计仍出现在 grounding、相同结果重复、以及 `MultiToolMessage` 中同商品后值不能替换前值。
+- **真实数据兼容性前提：** 前一轮只读检查已用保存的 V0 Pilot Product Tool Result 验证解析器可读取官方 Retail 的 `name`、`product_id`、`variants` 和布尔 `available` 结构；本次没有重新运行该 artifact。
+
+### 根因与修复
+
+- **根因：** `V1AgentState.availability_facts` 是 append-only list，`generate_next_message()` 对新 facts 执行 `extend()`；grounding 因而包含相同商品的全部历史版本。
+- **修复：** state 改为有序 `dict[product_id, VariantAvailabilityFact]`。可信新 fact 按 `product_id` assignment/update 替换旧 value；Python dict 保留首次出现的 key 顺序，因此同一输入 history 的 grounding 顺序稳定。不同商品使用不同 key，不发生数量合并。
+- **异常边界：** 无效 JSON、缺失/非布尔 `available`、Tool Error 都不会生成更新项，因此不能覆盖已有可信 fact。`MultiToolMessage` 仍按官方 message 顺序展开；同一批内同商品的最后一个有效结果获胜。
+- **保留项：** 原始 ToolMessage、完整 messages history、基础 system prompt 中的 Retail Policy 和官方 Harness/Tool 边界均未改写。动态 grounding 只包含每个商品当前最新的可信统计。
+
+### 回归结果与限制
+
+- 新增/更新的测试覆盖：同商品更新与去重、不同商品独立、MultiToolMessage 顺序、无效结果不覆盖、完整 Policy/原始 history 保留，以及既有解析/Factory/Registry/Builder 场景。
+- 先在旧代码上运行 V1 测试，确认 4 项新增回归测试失败；实施修复后运行完整 pytest：**31 passed，1 个上游 `audioop` deprecation warning**。
+- 这只证明本地 state、context 构造和 Mock protocol 行为。尚未验证真实 LLM 是否遵循 grounding、实际 Retail Task 的 NL assertion / Reward、Token/延迟/费用影响，或更长对话中的产品事实选择效果。

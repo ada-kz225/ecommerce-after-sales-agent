@@ -128,7 +128,10 @@ def test_v1_rebuilds_facts_from_flattened_resumable_history() -> None:
     state = create_v1_agent([], "Policy", llm="mock/model").get_init_state([tool_message])
 
     assert state.messages == [tool_message]
-    assert [(fact.product_name, fact.available_variants) for fact in state.availability_facts] == [
+    assert [
+        (fact.product_name, fact.available_variants)
+        for fact in state.availability_facts.values()
+    ] == [
         ("Desk Lamp", 1)
     ]
 
@@ -149,7 +152,7 @@ def test_multi_tool_history_is_preserved_and_invalid_or_error_results_are_ignore
     )
 
     assert state.messages[:3] == [valid, missing_availability, failed]
-    assert [fact.product_name for fact in state.availability_facts] == ["Bicycle"]
+    assert [fact.product_name for fact in state.availability_facts.values()] == ["Bicycle"]
     assert [message.role for message in calls[0]["messages"]] == [
         "system",
         "system",
@@ -157,6 +160,109 @@ def test_multi_tool_history_is_preserved_and_invalid_or_error_results_are_ignore
         "tool",
         "tool",
     ]
+
+
+def test_newer_result_replaces_old_fact_for_the_same_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v1_agent([], "Retail policy", llm="mock/model")
+    state = agent.get_init_state()
+    calls = _install_mock_generate(monkeypatch)
+    older = _tool_message("old", _product_result("Backpack", "bag-2", [True, True, False]))
+    newer = _tool_message("new", _product_result("Backpack", "bag-2", [False, False, True]))
+
+    _, state = agent.generate_next_message(older, state)
+    _, state = agent.generate_next_message(newer, state)
+
+    assert len(state.availability_facts) == 1
+    fact = state.availability_facts["bag-2"]
+    assert (fact.total_variants, fact.available_variants, fact.unavailable_variants) == (
+        3,
+        1,
+        2,
+    )
+    latest_grounding = next(
+        message.content
+        for message in calls[-1]["messages"]
+        if message.role == "system" and message is not state.system_messages[0]
+    )
+    assert "available_variants=1" in latest_grounding
+    assert "total_variants=3; available_variants=2; unavailable_variants=1." not in latest_grounding
+
+
+def test_repeated_identical_result_is_deduplicated_and_different_products_are_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v1_agent([], "Retail policy", llm="mock/model")
+    state = agent.get_init_state()
+    _install_mock_generate(monkeypatch)
+    backpack = _tool_message("bag-first", _product_result("Backpack", "bag-2", [True, False]))
+    backpack_repeat = _tool_message("bag-repeat", _product_result("Backpack", "bag-2", [True, False]))
+    coffee = _tool_message("coffee", _product_result("Coffee Maker", "coffee-1", [True, True, True]))
+
+    _, state = agent.generate_next_message(backpack, state)
+    _, state = agent.generate_next_message(backpack_repeat, state)
+    _, state = agent.generate_next_message(coffee, state)
+
+    assert list(state.availability_facts) == ["bag-2", "coffee-1"]
+    assert state.availability_facts["bag-2"].available_variants == 1
+    assert state.availability_facts["coffee-1"].available_variants == 3
+    assert state.messages[:3] == [backpack, AssistantMessage.text("Grounded reply."), backpack_repeat]
+
+
+def test_multi_tool_updates_in_message_order_and_invalid_result_preserves_old_fact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v1_agent([], "Retail policy", llm="mock/model")
+    state = agent.get_init_state()
+    calls = _install_mock_generate(monkeypatch)
+    original = _tool_message("original", _product_result("Bicycle", "bike-1", [True, True]))
+    invalid = _tool_message("invalid", _product_result("Bicycle", "bike-1", [True, None]))
+    failed_update = _tool_message(
+        "failed-update", _product_result("Bicycle", "bike-1", [False, False]), error=True
+    )
+    older = _tool_message("older", _product_result("Lamp", "lamp-1", [True, True]))
+    newer = _tool_message("newer", _product_result("Lamp", "lamp-1", [False, True]))
+
+    _, state = agent.generate_next_message(original, state)
+    _, state = agent.generate_next_message(
+        MultiToolMessage(
+            role="tool", tool_messages=[invalid, failed_update, older, newer]
+        ),
+        state,
+    )
+
+    assert list(state.availability_facts) == ["bike-1", "lamp-1"]
+    assert state.availability_facts["bike-1"].available_variants == 2
+    assert state.availability_facts["lamp-1"].available_variants == 1
+    grounding = next(
+        message.content
+        for message in calls[-1]["messages"]
+        if message.role == "system" and message is not state.system_messages[0]
+    )
+    assert grounding.index("Bicycle") < grounding.index("Lamp")
+
+
+def test_llm_context_keeps_retail_policy_and_raw_history_while_replacing_fact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = "Retail policy must remain present."
+    agent = create_v1_agent([], policy, llm="mock/model")
+    state = agent.get_init_state()
+    calls = _install_mock_generate(monkeypatch)
+    older = _tool_message("old", _product_result("Backpack", "bag-2", [True, True]))
+    newer = _tool_message("new", _product_result("Backpack", "bag-2", [False, False]))
+
+    _, state = agent.generate_next_message(older, state)
+    _, state = agent.generate_next_message(newer, state)
+
+    messages = calls[-1]["messages"]
+    assert messages[0] is state.system_messages[0]
+    assert policy in (messages[0].content or "")
+    assert older in messages and newer in messages
+    grounding = messages[1].content or ""
+    assert "available_variants=0" in grounding
+    assert "total_variants=2; available_variants=2; unavailable_variants=0." not in grounding
 
 
 def test_v1_factory_registry_and_builder_are_compatible() -> None:

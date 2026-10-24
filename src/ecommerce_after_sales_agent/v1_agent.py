@@ -85,14 +85,16 @@ def extract_variant_availability_fact(content: Optional[str]) -> Optional[Varian
         unavailable_variants=total_variants - available_variants,
     )
 
-# V1 比 V0 多一个 availability_facts：只保存通过严格校验后的库存摘要。
+
+# V1 比 V0 多一个 availability_facts：按 product_id 保存每个商品最新的可信库存摘要。
 @dataclass
 class V1AgentState:
     """V0-compatible history plus trusted inventory facts from Tool Results."""
 
     system_messages: list[SystemMessage]
     messages: list[APICompatibleMessage] = field(default_factory=list)
-    availability_facts: list[VariantAvailabilityFact] = field(default_factory=list)
+    # dict preserves first-seen product order while assignment replaces stale data.
+    availability_facts: dict[str, VariantAvailabilityFact] = field(default_factory=dict)
 
 
 # V1 继承 V0
@@ -112,7 +114,7 @@ class V1Agent(V0Agent):
         return V1AgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=history,
-            availability_facts=self._new_availability_facts(history),
+            availability_facts=self._facts_by_product(history),
         )
 
     @staticmethod
@@ -122,17 +124,17 @@ class V1Agent(V0Agent):
             return list(message.tool_messages)
         return [message]
 
-    # 只从满足下列条件的message 生成 fact
+    # 只从满足下列条件的 message 生成 fact；同一批中后出现的可信结果覆盖前值。
     @staticmethod
-    def _new_availability_facts(
+    def _facts_by_product(
         messages: list[APICompatibleMessage],
-    ) -> list[VariantAvailabilityFact]:
-        facts: list[VariantAvailabilityFact] = []
+    ) -> dict[str, VariantAvailabilityFact]:
+        facts: dict[str, VariantAvailabilityFact] = {}
         for message in messages:
             if isinstance(message, ToolMessage) and not message.error:
                 fact = extract_variant_availability_fact(message.content)
                 if fact is not None:
-                    facts.append(fact)
+                    facts[fact.product_id] = fact
         return facts
 
     # 将已验证的 facts 变成额外 SystemMessage
@@ -146,7 +148,7 @@ class V1Agent(V0Agent):
             "The following counts were calculated from complete successful tool results.",
             "Use available_variants for questions about what is available; do not substitute total_variants.",
         ]
-        for fact in state.availability_facts:
+        for fact in state.availability_facts.values():
             lines.append(
                 f"Product {fact.product_name!r} ({fact.product_id}): "
                 f"total_variants={fact.total_variants}; "
@@ -164,7 +166,9 @@ class V1Agent(V0Agent):
         """Keep raw input, add only trusted facts, then call the official LLM helper."""
         incoming = self._incoming_messages(message)
         state.messages.extend(incoming)
-        state.availability_facts.extend(self._new_availability_facts(incoming))
+        # Invalid/error results produce no entry, so they cannot erase a prior fact.
+        # Updating an existing dict key keeps its first-seen order and replaces its value.
+        state.availability_facts.update(self._facts_by_product(incoming))
 
         grounding_message = self._grounding_message(state)
         context = list(state.system_messages)
