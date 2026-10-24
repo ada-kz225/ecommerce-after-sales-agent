@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 已完成一次真实 Retail Smoke Test 和固定 Tasks `0–4` 的首次 Pilot；阶段 3B（V1）尚未开始。
-- **当前进度：** 已完成官方 Retail Smoke Test、官方 5-task Pilot Baseline、官方源码梳理，以及个人 V0 的 Task `0` Smoke Test 和 5-task Pilot（`2/5`、平均 Reward `0.40`）。详见 [实验记录](docs/EXPERIMENT_LOG.md)；这些单次/小批量结果均不是完整基准成绩，也不证明 V0 相对官方 Agent 的稳定优势。
-- **下一步：** 先为 V1 选择并测试 availability-aware factual grounding 与 step-budget-aware planning 两项候选机制；随后在固定任务和重复 trial 下进行 V0 / V1 / 官方对比并补齐 Token/cost capture。
+- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 已完成一次真实 Retail Smoke Test 和固定 Tasks `0–4` 的首次 Pilot；阶段 3B 已开始，Availability-aware Factual Grounding 已完成 Mock 测试。
+- **当前进度：** 已完成官方 Retail Smoke Test、官方 5-task Pilot Baseline、官方源码梳理、个人 V0 的 Task `0` Smoke Test / 5-task Pilot，以及 V1 的 availability grounding 单元测试。详见 [实验记录](docs/EXPERIMENT_LOG.md)；这些单次/小批量结果均不是完整基准成绩，Mock 通过也不证明真实 Reward 提升。
+- **下一步：** 为该 V1 机制准备固定的真实 Retail 对照实验；是否再实现 step-budget-aware planning，须在记录 V1 真实结果后决定。随后在固定任务和重复 trial 下进行 V0 / V1 / 官方对比并补齐 Token/cost capture。
 
 ## Milestone 总览
 
@@ -18,7 +18,7 @@
 | --- | --- | --- | --- |
 | M1 | 官方 Baseline 复现 | 进行中 | 已完成 5-task Pilot；仍需完成更大、可比较的批量评测与结果记录 |
 | M2 | Agent 架构与源码理解 | 已完成 | 已输出官方 Agent、Tool、Harness 与 Evaluation 调用关系笔记 |
-| M3 | 自主 Agent 开发 | 进行中 | 已验证最小接入契约、V0 Task 0 Smoke Test 与首次 V0 5-task Pilot；V1 尚无实现 |
+| M3 | 自主 Agent 开发 | 进行中 | 已验证最小接入契约、V0 Task 0 Smoke Test / 首次 5-task Pilot；V1 availability grounding 已有 Mock 测试 |
 | M4 | Evaluation 与可靠性测试 | 未开始 | 建立对比、Golden Set 与回归测试 |
 | M5 | RAG 扩展（可选） | 未开始 | 完成有对照的检索增强实验 |
 | M6 | Observability | 未开始 | 可查询的端到端 Trace 与成本指标 |
@@ -74,7 +74,7 @@
 
 - [x] 核实并记录 `HalfDuplexAgent` 接口、Agent State、消息类型、factory 与 registry 的最小契约。
 - [x] 验证独立仓库通过 Python entry point 进行 process-local registry 注册，并由官方 `build_agent()` 构建自定义 Agent；外部 CLI 的自动加载方式仍未验证。
-- [x] 自主实现 V0 的 Prompt 构造、消息状态管理、官方 `generate()` 调用、Tool Call / Tool Result 接收和下一步决策；当前仅以 Mock 验证。
+- [x] 自主实现 V0 的 Prompt 构造、消息状态管理、官方 `generate()` 调用、Tool Call / Tool Result 接收和下一步决策；已完成 Mock 测试、真实 Task `0` Smoke Test 和首次 5-task Pilot 验证。
 - [x] 保持官方 `AssistantMessage`、Tool schema 与 history 协议兼容；复用官方 LLM 调用封装，避免重复开发基础设施。
 - [x] 明确 Agent 与 Harness 的边界：Agent 产生消息/决策，官方 Harness 负责角色调度，官方 Environment / Tools 负责实际执行。
 - [x] 编写不依赖付费 API 的接口与单元测试。
@@ -89,8 +89,8 @@
 
 #### Checklist
 
-- [ ] 优先实现并测试 **availability-aware factual grounding**：从结构化 Tool Result 的 `available` 字段得出 inventory 事实，不写死某个 task 的答案。
-- [ ] 优先实现并测试 **step-budget-aware planning and completion**：在多实体流程中保留完成写入与最终回复所需的 interaction budget。
+- [x] 实现并以 Mock 测试 **availability-aware factual grounding**：从结构化 Tool Result 的 `available` 字段得出 inventory 事实，不写死某个 task 的答案；尚待真实 Retail 对照验证。
+- [ ] 是否实现并测试 **step-budget-aware planning and completion**，待获得 V1 grounding 的真实运行证据后决定。
 - [ ] Tool Error 结构化恢复、重复失败 Tool Call 检测/合理终止、写操作前 confirmation / permission 检查与关键写操作后状态验证，待出现 V0 对应失败证据后再排序选择。
 - [ ] 为每项选定机制编写测试，并保留触发它的失败案例或最小复现。
 - [ ] 使用可比配置进行 V0 / V1 对照，记录收益、代价和局限性。
@@ -98,7 +98,7 @@
 
 **验收标准：** V1 的每项增强有可运行测试；对照实验不将单次随机结果表述为稳定提升。
 
-**当前状态：** 3A 的固定响应 Agent、V0 Mock 接口测试、真实 Task `0` Smoke Test 与首次可比的 5-task Pilot 均已完成；更大/重复 V0 对比和完整成本记录仍待完成；3B 未开始。
+**当前状态：** 3A 的固定响应 Agent、V0 Mock 接口测试、真实 Task `0` Smoke Test 与首次可比的 5-task Pilot 均已完成；3B 的 availability grounding 已完成 Mock 测试，但没有真实 V1 Retail 结果；更大/重复对比和完整成本记录仍待完成。
 
 ## 4. Evaluation 与可靠性测试（必做）
 
