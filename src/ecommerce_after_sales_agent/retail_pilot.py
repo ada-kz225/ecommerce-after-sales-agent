@@ -34,12 +34,14 @@ class RetailPilotPlan:
     output_path: Path
 
 
-def build_pilot_config() -> TextRunConfig:
-    """Return the fixed configuration comparable with the official 0--4 Pilot."""
+def build_pilot_config(
+    *, agent_name: str = V0_AGENT_NAME, save_to: str = PILOT_SAVE_TO
+) -> TextRunConfig:
+    """Return the fixed configuration shared by comparable 0--4 Pilots."""
     return TextRunConfig(
         domain="retail",
         task_split_name="base",
-        agent=V0_AGENT_NAME,
+        agent=agent_name,
         llm_agent="openai/gpt-4.1-mini",
         llm_args_agent={"temperature": 0.0},
         user="user_simulator",
@@ -55,7 +57,7 @@ def build_pilot_config() -> TextRunConfig:
         seed=42,
         verbose_logs=True,
         auto_review=False,
-        save_to=PILOT_SAVE_TO,
+        save_to=save_to,
     )
 
 
