@@ -51,7 +51,12 @@ class ExchangeRepeatPreflight:
     trial_seeds: tuple[int, ...]
 
 
-def build_repeat_config(agent_version: AgentVersion) -> TextRunConfig:
+def build_repeat_config(
+    agent_version: AgentVersion,
+    *,
+    task_ids: list[str] = REPEAT_TASK_IDS,
+    save_to: str | None = None,
+) -> TextRunConfig:
     """Build one post-fix config; V0/V1 differ only by agent and save target."""
     agent_name = V0_AGENT_NAME if agent_version == "v0" else V1_AGENT_NAME
     return TextRunConfig(
@@ -63,7 +68,7 @@ def build_repeat_config(agent_version: AgentVersion) -> TextRunConfig:
         user="user_simulator",
         llm_user="openai/gpt-4.1-mini",
         llm_args_user={"temperature": 0.0},
-        task_ids=REPEAT_TASK_IDS,
+        task_ids=task_ids,
         num_trials=REPEAT_NUM_TRIALS,
         max_steps=30,
         max_errors=10,
@@ -73,7 +78,7 @@ def build_repeat_config(agent_version: AgentVersion) -> TextRunConfig:
         seed=REPEAT_RUN_SEED,
         verbose_logs=True,
         auto_review=False,
-        save_to=REPEAT_SAVE_TO[agent_version],
+        save_to=save_to or REPEAT_SAVE_TO[agent_version],
     )
 
 
@@ -83,9 +88,11 @@ def _runner_trial_seeds(config: TextRunConfig) -> tuple[int, ...]:
     return tuple(rng.randint(0, 1_000_000) for _ in range(config.num_trials))
 
 
-def build_exchange_repeat_preflight(agent_version: AgentVersion) -> ExchangeRepeatPreflight:
-    """Register/build the requested Agent and resolve two Retail tasks without LLM calls."""
-    config = build_repeat_config(agent_version)
+def build_repeat_preflight(
+    agent_version: AgentVersion, *, task_ids: list[str], save_to: str
+) -> ExchangeRepeatPreflight:
+    """无 API 地注册、构建指定 Agent，并解析指定的 Retail 任务。"""
+    config = build_repeat_config(agent_version, task_ids=task_ids, save_to=save_to)
     if agent_version == "v0":
         registered_name = register_v0_agent()
         expected_type = V0Agent
@@ -113,9 +120,9 @@ def build_exchange_repeat_preflight(agent_version: AgentVersion) -> ExchangeRepe
         task_ids=config.task_ids,
     )
     actual_task_ids = [task.id for task in tasks]
-    if actual_task_ids != REPEAT_TASK_IDS:
+    if actual_task_ids != task_ids:
         raise RuntimeError(
-            f"Repeat run must resolve Retail tasks {REPEAT_TASK_IDS}, got {actual_task_ids}"
+            f"Repeat run must resolve Retail tasks {task_ids}, got {actual_task_ids}"
         )
     plan = RetailPilotPlan(
         config=config,
@@ -126,6 +133,15 @@ def build_exchange_repeat_preflight(agent_version: AgentVersion) -> ExchangeRepe
         plan=plan,
         built_agent_type=type(agent).__name__,
         trial_seeds=_runner_trial_seeds(config),
+    )
+
+
+def build_exchange_repeat_preflight(agent_version: AgentVersion) -> ExchangeRepeatPreflight:
+    """无 API 地构建 Tasks 0–1 换货重复实验预检。"""
+    return build_repeat_preflight(
+        agent_version,
+        task_ids=REPEAT_TASK_IDS,
+        save_to=REPEAT_SAVE_TO[agent_version],
     )
 
 
@@ -141,7 +157,7 @@ def preflight_repeat_payload(preflight: ExchangeRepeatPreflight) -> dict:
             "trial_seeds": list(preflight.trial_seeds),
             "seed_strategy": (
                 "tau2 v2.0.0 batch runner deterministically derives one seed per "
-                "trial from run seed 42; both Tasks 0 and 1 share that trial seed, "
+                "trial from run seed 42; all selected tasks share that trial seed, "
                 "then the Text Orchestrator passes it to Agent and User."
             ),
             "agent_supports_harness_seed": True,

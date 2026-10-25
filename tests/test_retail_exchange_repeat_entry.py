@@ -17,7 +17,7 @@ def test_repeat_preflight_builds_the_expected_agents_tasks_and_trial_seeds() -> 
     assert [task.id for task in v0.plan.tasks] == ["0", "1"]
     assert [task.id for task in v1.plan.tasks] == ["0", "1"]
     assert v0.plan.config.num_trials == v1.plan.config.num_trials == 3
-    # This is the exact sequence from random.Random(42), matching batch.py.
+    # 这是 random.Random(42) 的确定序列，与官方 batch.py 一致。
     assert v0.trial_seeds == v1.trial_seeds == (670487, 116739, 26225)
     assert str(v0.plan.output_path).endswith(
         "retail-v0-seed-protocol-fixed-repeat-0-1-t3/results.json"
@@ -47,14 +47,11 @@ def test_built_repeat_agents_support_harness_seed_without_changing_temperature()
     for version in ("v0", "v1"):
         config = retail_exchange_repeat.build_repeat_config(version)
         preflight = retail_exchange_repeat.build_exchange_repeat_preflight(version)
-        # The production assertion occurs in the preflight builder; this test
-        # additionally verifies the same official mixin behavior on a fresh build.
+        # 生产代码在预检构建时已断言；此处确认入口层的同一 mixin 约束。
         assert preflight.built_agent_type in {"V0Agent", "V1Agent"}
         assert config.llm_args_agent == {"temperature": 0.0}
 
-    # Direct generate-kwargs capture is covered for both Agent versions in
-    # test_v0_agent.py and test_v1_availability_grounding.py; this entry test
-    # keeps the plan-level no-API contract explicit.
+    # 两个 Agent 的 generate kwargs 捕获由对应单元测试覆盖；此处只验证入口约束。
     assert issubclass(retail_exchange_repeat.V0Agent, LLMConfigMixin)
     assert issubclass(retail_exchange_repeat.V1Agent, LLMConfigMixin)
 
