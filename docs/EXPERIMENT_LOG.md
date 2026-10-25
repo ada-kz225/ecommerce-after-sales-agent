@@ -370,3 +370,48 @@ PYTHONPATH=src ../tau2-bench/.venv/bin/python \
 - **回归：** Mock 捕获验证 V0/V1 的 `generate()` 参数包含 Harness seed，并保留已有 LLM 参数；覆盖合法 history / ToolMessage / MultiToolMessage、非法 history / requestor / message type，以及 V1 grounding。运行 `PYTHONPATH=src ../tau2-bench/.venv/bin/python -m pytest -q`：**39 passed，1 个上游 `audioop` deprecation warning**。
 - **后续 multi-trial 随机性：** 官方 `runner/batch.py` 先以 run-level `config.seed` 初始化 Python RNG，再为每个 `trial` 生成一个 seed；同一 trial 的所有 task 共用该 trial seed，随后 `Orchestrator` 将它分别传给 Agent 和 User。修复后 V0/V1 遵从此路径。对照实验应固定相同 task IDs、task 顺序、`config.seed`、`num_trials`、模型和 LLM 参数；不应把自定义的 `llm_args_agent.seed` 当成独立控制量，因为官方会按 trial seed 覆盖它。
 - **实验边界：** 此修复可能改变后续 V0/V1 的 LLM 采样行为。既有 V0/V1 Pilot artifacts 保留为修复前结果，不覆盖、不删除；之后的对照实验必须另存并明确标记为 **seed/protocol compatibility-fixed**，不得直接把新旧结果混作同一代码版本的重复 trial。
+
+## 2026-10-25 — 修复后 V0/V1 换货重复对照（Tasks 0–1，3 trials）
+
+### 范围、配置与完整性
+
+- **目的：** 检查 Seed/History compatibility-fixed 后的 V0/V1 在换货路径上的稳定性；这是独立于旧 Pilot 的新代码版本实验。
+- **Artifacts：** V0 为 `../tau2-bench/data/simulations/retail-v0-seed-protocol-fixed-repeat-0-1-t3/results.json`，V1 为 `../tau2-bench/data/simulations/retail-v1-seed-protocol-fixed-repeat-0-1-t3/results.json`。两份各有 6 条完整 simulation，且 `agent_info.implementation` 分别为 `ecommerce_after_sales_v0` / `ecommerce_after_sales_v1`。
+- **可比配置：** Retail `base` split、Tasks `0, 1`、每 task `3` trials、`openai/gpt-4.1-mini`（Agent/User，`temperature=0.0`）、run seed `42`、`max_steps=30`、`max_errors=10`、`max_retries=0`、`max_concurrency=1`、`workers=0`、`auto_review=false`、`verbose_logs=true`、LLM log mode `all`，以及与旧 Pilot 相同的默认 semantic communication 配置。除 Agent 实现和新 `save_to` 目录外，两个 `TextRunConfig` 相同。
+- **Trial seed：** 官方 artifact 的零起始 `trial=0/1/2` 分别使用 `670487`、`116739`、`26225`；同一 trial 的 Tasks 0、1 共用 seed。所有 12 个 simulation 均为 `user_stop`，无 Tool Error。
+
+### 结果
+
+| Task | V0 成功 / DB / Action | V1 成功 / DB / Action | V0 / V1 平均耗时 | 观察 |
+| --- | --- | --- | ---: | --- |
+| 0 | `3/3` / `3/3` / `15/15` | `2/3` / `2/3` / `14/15` | 16.65 / 17.49 s | V1 有一次成功 Tool write 但 replacement variant 不匹配。 |
+| 1 | `1/3` / `1/3` / `13/15` | `3/3` / `3/3` / `15/15` | 16.45 / 15.66 s | V0 两次成功 Tool write 但多交换 keyboard。 |
+| 合计 | **4/6** / `4/6` / `28/30` | **5/6** / `5/6` / `29/30` | 16.55 / 16.57 s | 6 个 sample/版本，不能作为稳定性能结论。 |
+
+这两个 task 没有 NL assertion；`reward_basis=DB + NL_ASSERTION` 中的 NL 部分为空，故 Reward 差异由 DB Check 决定。失败条目的四项 read Action Checks 均通过，唯一不匹配项都是 `exchange_delivered_order_items`。
+
+### 三个失败 trajectory（脱敏）
+
+以下 `trial` 均使用官方结果的零起始编号；若按日常序号计数，`trial=1` 是第二次运行。
+
+| Agent / Task / trial / seed | 已确认的写入与确认过程 | 为什么 DB / Action 失败 |
+| --- | --- | --- |
+| V1 / Task 0 / `1` / `116739` | 已认证、读取 order/product，列明两个 replacement 和支付方式；User 显式确认；exchange Tool `executed` 且 `error=false`。 | keyboard replacement 是一个可用的 clicky + RGB variant，但与静态 gold action 的 keyboard variant 不同；thermostat replacement 一致。因此 write Action Check 与最终 DB 都不匹配。 |
+| V0 / Task 1 / `0` / `670487` | 已认证、检查目标 exact keyboard variant 不可用后，列出替代项；User 选择 white-backlight keyboard + thermostat 并再次显式确认；Tool 成功执行。 | 静态目标要求只 exchange thermostat。实际 call 同时交换 keyboard 和 thermostat，故 write / DB 不匹配。 |
+| V0 / Task 1 / `1` / `116739` | 与上一条相同的 fallback、User 选择和显式确认链路；Tool 成功执行。 | 同样执行了 keyboard + thermostat，而非 gold 的 thermostat-only write。 |
+
+**Policy 边界：** 三个失败 trace 都包含 authentication、order/product 查询、写入前对 action details 的明确确认，且 Tool 成功接受了 order、可用 replacement 与 payment method。没有保存的证据显示违反 Retail policy 的硬性换货条件。Task 1 的 User 初始条件在 exact keyboard variant 不可用时倾向 thermostat-only，但随后的模拟 User 明确选择并确认了替代 keyboard；这与静态 gold action 不一致，不能仅据此断定为 policy violation 或 Tool defect。
+
+### Seed、Token 与费用
+
+- 每条 simulation 的 verbose Agent `llm_debug` request 都包含与该 simulation `seed` 相同的 `kwargs.seed`，且同一 simulation 内全部 Agent request 一致。这验证了修复后的 Harness → Agent → `generate()` 参数传递。
+- 这只证明请求携带 seed；未调用 provider 的可重复性审计接口，不能证明模型服务对相同 seed / prompt 的输出在跨运行时绝对确定。
+- V0：55 次 Agent LLM 调用、`284,272` prompt tokens、`3,144` completion tokens、debug records 汇总 Agent Cost **$0.0424384**；User Cost **$0.0120716**；耗时合计 `99.28 s`。
+- V1：56 次 Agent LLM 调用、`293,965` prompt tokens、`3,340` completion tokens、debug records 汇总 Agent Cost **$0.0545396**；User Cost **$0.0117816**；耗时合计 `99.43 s`。
+- `results.json` 的 `agent_cost` / `agent_usage` 仍为 `null`；上述 Agent 数据来自保存的 debug records。两份结果均没有可汇总的 Judge token/cost，且 `communicate_checks=null`；缺失不等于零成本。
+
+### 结论与下一步
+
+- 这组证据**不支持**“V1 存在已确认的系统性换货退化”：V1 在 Task 1 为 `3/3`，总体为 `5/6`；但 V1 Task 0 仍有 `1/3` 的静态 write mismatch，样本不足以排除更广泛回归。
+- 也没有因果证据表明 Grounding 导致 V1 的 Task 0 replacement 选择。V1 request 中会加入 Product availability facts，但这些 aggregate facts 不指定应选哪个具体 variant；V0 和 V1 的独立 LLM/User trajectories 也不能作为受控消融。
+- 未发现需要立即修复的 Agent 代码缺陷。建议将 Tasks 0–1 保留为回归 sentinel，下一步转向修复后 Tasks 2–4 的多 trial Grounding stability 对照；这是该机制的目标失败模式，且尚未在修复后版本重复验证。
