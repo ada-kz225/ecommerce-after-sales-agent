@@ -109,8 +109,7 @@ class V1Agent(V0Agent):
         self, message_history: Optional[list[Message]] = None
     ) -> V1AgentState:
         history = list(message_history) if message_history is not None else []
-        if any(isinstance(message, MultiToolMessage) for message in history):
-            raise ValueError("Message history must contain flattened ToolMessage entries")
+        self._validate_history(history)
         return V1AgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=history,
@@ -164,6 +163,7 @@ class V1Agent(V0Agent):
         self, message: ValidAgentInputMessage, state: V1AgentState
     ) -> tuple[AssistantMessage, V1AgentState]:
         """Keep raw input, add only trusted facts, then call the official LLM helper."""
+        self._validate_input_message(message)
         incoming = self._incoming_messages(message)
         state.messages.extend(incoming)
         # Invalid/error results produce no entry, so they cannot erase a prior fact.

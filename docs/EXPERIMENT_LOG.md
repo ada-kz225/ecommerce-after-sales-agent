@@ -277,3 +277,96 @@ PYTHONPATH=src ../tau2-bench/.venv/bin/python \
 - 新增/更新的测试覆盖：同商品更新与去重、不同商品独立、MultiToolMessage 顺序、无效结果不覆盖、完整 Policy/原始 history 保留，以及既有解析/Factory/Registry/Builder 场景。
 - 先在旧代码上运行 V1 测试，确认 4 项新增回归测试失败；实施修复后运行完整 pytest：**31 passed，1 个上游 `audioop` deprecation warning**。
 - 这只证明本地 state、context 构造和 Mock protocol 行为。尚未验证真实 LLM 是否遵循 grounding、实际 Retail Task 的 NL assertion / Reward、Token/延迟/费用影响，或更长对话中的产品事实选择效果。
+
+## 2026-10-25 — V1 Availability-aware Factual Grounding 首次 Retail 5-task Pilot
+
+### 范围、配置与可比性
+
+- **状态：** 已完成。这是 `ecommerce_after_sales_v1` 的首次真实 Retail Pilot；固定 5 个任务、单个 trial 的结果，不是完整 benchmark，也不证明稳定的性能提升。
+- **官方环境：** `../tau2-bench/` 为 τ²-bench `v2.0.0`，commit `989d3285ae669e49503324bdb9981bf14fccedeb`；`retail`、`base` split、Tasks `0–4`。
+- **运行配置：** V1 / `user_simulator` 都使用 `openai/gpt-4.1-mini`、`temperature=0.0`；`seed=42`、`num_trials=1`、`max_steps=30`、`max_errors=10`、`max_retries=0`、`max_concurrency=1`、`workers=0`、`timeout=null`、`auto_review=false`、`verbose_logs=true`、LLM log mode `all`。评测规则和默认 semantic communication 配置与 V0 Pilot 相同。
+- **原始 artifacts：** V0 为 `../tau2-bench/data/simulations/retail-v0-pilot-0-4/results.json`；V1 为 `../tau2-bench/data/simulations/retail-v1-pilot-0-4/results.json`。V1 的 `info.agent_info.implementation` 为 `ecommerce_after_sales_v1`，确认没有误用 V0。
+- **唯一预期的实现差异：** V1 在保留 V0 的 Agent/Harness/Environment 边界的前提下，向 LLM 请求加入由 Product Tool Result 计算出的 latest availability facts。两个 artifact 的实际 conversation 仍是独立运行；即使固定 seed，也不能将任一对话差异直接归因于该 Context。
+
+### 逐任务对比
+
+`Action Checks` 是诊断信息。本组任务的 Reward 由 `DB + NL_ASSERTION` 的 `reward_basis` 决定；未正常完成的 V0 Task 2 没有正常评分结果。
+
+| Task | V0 Reward / Termination | V1 Reward / Termination | V0 DB / Action / NL | V1 DB / Action / NL | V0 / V1 耗时 | 关键 Tool Call 差异 |
+| --- | --- | --- | --- | --- | ---: | --- |
+| 0 | `1.0` / `user_stop` | `0.0` / `user_stop` | `1.0` / `5/5` / 无 assertion | `0.0` / `4/5` / 无 assertion | 30.19 / 21.80 s | 两者都成功 exchange；keyboard replacement variant 不同。 |
+| 1 | `1.0` / `user_stop` | `0.0` / `user_stop` | `1.0` / `5/5` / 无 assertion | `0.0` / `4/5` / 无 assertion | 16.52 / 16.51 s | V0 只 exchange thermostat；V1 成功执行 keyboard + thermostat exchange。 |
+| 2 | `0.0` / `max_steps` | `1.0` / `user_stop` | 未评分 / 未评分 / 未评分 | `1.0` / `9/11` / `1/1` | 23.61 / 21.07 s | 都成功 return；V1 将五个 order reads 合并为一批 Tool Call。 |
+| 3 | `0.0` / `user_stop` | `1.0` / `user_stop` | `1.0` / `11/12` / `0/1` | `1.0` / `11/12` / `1/1` | 19.15 / 18.80 s | 两者完成同类 order modification；V1 明确回答 availability 数。 |
+| 4 | `0.0` / `user_stop` | `1.0` / `user_stop` | `1.0` / `12/13` / `0/1` | `1.0` / `12/13` / `1/1` | 26.81 / 17.48 s | 两者完成两个 order modification；V1 区分 total 与 available 数。 |
+
+**结果：V0 为 2/5、平均 Reward `0.40`；V1 为 3/5、平均 Reward `0.60`。** V1 在本次固定小样本中使 Tasks 2–4 的 NL assertion 均通过，同时 Tasks 0、1 从成功变为失败。这是需要继续调查的 trade-off，不是已证明的整体提升。
+
+### Grounding 在真实请求中的证据与正向观察
+
+**已确认事实**
+
+- V1 保存的 `llm_debug` 中，Tasks 2、3、4 的实际 Agent LLM request 均包含 `<verified_inventory_facts>`，其中 T-shirt 的聚合为 `total=12`、`available=10`、`unavailable=2`。这直接证明动态 Context 进入了真实 LLM 请求，而不只是 Mock 测试。
+- 这三题的 Product Tool Result 同样支持 12 / 10 / 2；V1 的最终相关回复均明确给出 **10 available**，三个 NL assertions 都通过。
+- Task 3、4 的 DB / Action 诊断与 V0 基本相同而 NL 由失败变为通过，因此“已提供正确、可用的事实并与正确回答同时出现”是 grounding 的正向证据。
+
+**不能由本次数据确认的结论**
+
+- 真实 request 中存在 Context，不能单独证明它是 LLM 正确回答、批量 Tool Call 或最终 Reward 变化的唯一原因；两个 run 的生成轨迹和 User Simulator 对话均不同。
+- 没有发现 Retail Policy 被覆盖、截断或与新增 facts 明确冲突的 artifact 证据；也没有一个可将任意工具决策偏移直接归因于 Context 的对照诊断。
+
+### Task 0、1：成功写入但与静态目标不匹配
+
+#### Task 0
+
+**已确认事实**
+
+- V1 与 V0 都完成了 authentication、所需 reads 和 `exchange_delivered_order_items`；两次该 write 的 Tool Result 都成功，未见 Tool Error。
+- 两者交换的原 item 和 thermostat replacement 一致，但 V1 选择了与 V0 不同的 keyboard replacement variant。V0 的 variant 与 golden write action 相符；V1 的 variant 不符，故 `Action Checks=4/5` 且最终 DB state 不匹配（`DB=0.0`）。
+- V1 先向 User 提供可选 keyboard fallback，User 选择其中一个并确认；V0 提供/执行的是另一个 fallback。也就是说，失败不是 exchange Tool 执行失败，而是成功执行了与该 task 静态目标不同的 variant 选择。
+
+**尚不能确认的归因**
+
+- Task 0 的 V1 request 确实含 keyboard / thermostat 的 availability facts，但这些统计不指定该选哪个 variant。没有直接证据证明 grounding 导致了 V1 的 offer、User 的选择或 write 参数变化。
+- 这可能反映 LLM 对 fallback 和对话分支的决策差异；也可能受独立生成轨迹影响。需经重复/受控实验才能将其认定为 V1 回归缺陷。
+
+#### Task 1
+
+**已确认事实**
+
+- V0 成功执行 thermostat-only exchange，并匹配 golden write；V1 成功执行了 keyboard + thermostat 的 exchange，但该 write 不匹配，因而 `Action Checks=4/5`、`DB=0.0`。
+- V1 先把 keyboard fallback 作为可选方案，User 随后选择 keyboard + thermostat 并确认；V0 的对话最终只处理 thermostat。两次 Tool Result 均为成功。
+- 任务的静态期望与 V0 的 thermostat-only 路径相符，V1 的额外 keyboard 写入导致 DB mismatch。
+
+**尚不能确认的归因**
+
+- V1 request 也含两个商品的 availability facts，但没有证据显示其中的 total/available 数直接要求或诱发额外 keyboard exchange。只能确认 V1 的对话/写入路径改变，不应把相关性写成 grounding 的确定性副作用。
+
+### Task 2：正常评分与 Action Check 差异
+
+**已确认事实**
+
+- V0 已成功调用 return Tool，但在 `max_steps` 提前终止，未得到 DB / Action / NL 正常评分。V1 正常以 `user_stop` 结束，并完成 `DB=1.0`、`NL=1/1`。
+- V1 trace 中的五个 order reads 是一批 MultiTool Call；V0 为依次发起的 reads。这是 V1 能在 cap 前结束的可见交互差异，但本次没有因果实验，不能断言它由 grounding 造成。
+- V1 的 return write Tool Result 成功，且最终 DB 与 golden replay 一致，所以 DB Check 为 `1.0`。但其 item ID list 的前两个元素与 expected action 的顺序相反，导致 return write 的 Action Check 未匹配，合计为 `9/11`。
+- 官方 `../tau2-bench/src/tau2/data_model/tasks.py` 的 `Action.compare_with_tool_call()`（约 178–195 行）对选择的参数使用直接相等比较；list 顺序不同即不等。`evaluator_env.py` 的 Environment evaluator 则重放 golden action 后比较 DB state。因此同一条 write 可以 **DB 相同但 Action Check 不同**。由于 Action 不在本题 `reward_basis`，该诊断失败不阻止 Reward `1.0`（组合逻辑见 `evaluator.py` 约 238–284 行）。
+
+### Token、费用与 Judge 边界
+
+- `results.json` 中 V1 的 `agent_cost` / `agent_usage` 仍为 `null`，但 verbose `llm_debug` 的 Agent response records 含可汇总 usage/cost。按这些 debug records 汇总，V1 Agent 为 51 次调用、`278,952` prompt tokens、`3,276` completion tokens、约 **$0.0467424**；V0 为 57 次、`311,005` / `2,838`、约 **$0.0467668**。这些是已保存的 Agent 调用记录，而不是零成本。
+- V1 保存的 User Cost 合计约 **$0.0110004**；结果 artifact 没有 User token usage，也没有可汇总的 Judge token/cost。NL assertions 的 verdict 是 Tasks 2–4 存在 NL judging 的实际证据；`communicate_checks` 为空，`auto_review=false`，没有保存的 semantic communication Judge verdict / cost 证据。
+- V1 总 Agent prompt tokens 较 V0 少，主要同时伴随较少的 Agent 调用（51 vs 57）；Tasks 0、1 的 V1 prompt tokens 则略高。两次 trajectory 长度不同，无法从这些 aggregate 判断新增 Context 是否造成异常 Token 增长或成本变化，也不能将缺失的 Judge 费用当作零。
+
+### 局限与下一步
+
+- 本次只有固定 Tasks `0–4`、一个 trial、一个 seed；不报告 Pass^k，也不能将 `0.60` 相比 `0.40` 表述为稳定提升。
+- 下一步优先选择 **B：扩大/重复 V0–V1 对照实验**，并预先记录 Agent/User/Judge usage。理由是 Tasks 0、1 的结果回归已被观察到，但尚未证明为 Grounding 的确定性代码缺陷；先重复和分析相同配置下的分支稳定性，才能判断是否需要修复。此时开始 V1-2 step-budget 机制会混入新的变量，尚不宜优先进行。
+
+## 2026-10-25 — V0/V1 Seed 与消息协议兼容性修复（无 API）
+
+- **发现与依据：** 官方 Text `Orchestrator.initialize()` 会对 Agent 调用 `set_seed(self.seed)`（`../tau2-bench/src/tau2/orchestrator/orchestrator.py` 约 542–545 行）。旧 V0 没有 `LLMConfigMixin`，因此实际继承的是 Participant 的仅告警空实现；其后续 `generate()` 不会获得 Harness seed。V1 继承 V0，受同一问题影响。
+- **修复：** V0 改为以官方 `LLMConfigMixin` 为首个基类；该 mixin 将每个 simulation 的 seed 写入 `llm_args["seed"]`，而不覆盖已有 `temperature` 等参数。V1 通过继承自动采用相同实现。未修改 Prompt、Grounding 算法、Retail Tool、Harness 或 Evaluator。
+- **消息协议：** V0/V1 的 resumable history 现使用官方 `is_valid_agent_history_message()` 规则：只接受 AssistantMessage、非 Tool Call 的 UserMessage 与 `requestor="assistant"` 的 ToolMessage；运行时也拒绝 user-requested Tool Result 或非 Agent 输入。合法 `MultiToolMessage` 仍逐条展开并保留原始 Tool Result。
+- **回归：** Mock 捕获验证 V0/V1 的 `generate()` 参数包含 Harness seed，并保留已有 LLM 参数；覆盖合法 history / ToolMessage / MultiToolMessage、非法 history / requestor / message type，以及 V1 grounding。运行 `PYTHONPATH=src ../tau2-bench/.venv/bin/python -m pytest -q`：**39 passed，1 个上游 `audioop` deprecation warning**。
+- **后续 multi-trial 随机性：** 官方 `runner/batch.py` 先以 run-level `config.seed` 初始化 Python RNG，再为每个 `trial` 生成一个 seed；同一 trial 的所有 task 共用该 trial seed，随后 `Orchestrator` 将它分别传给 Agent 和 User。修复后 V0/V1 遵从此路径。对照实验应固定相同 task IDs、task 顺序、`config.seed`、`num_trials`、模型和 LLM 参数；不应把自定义的 `llm_args_agent.seed` 当成独立控制量，因为官方会按 trial seed 覆盖它。
+- **实验边界：** 此修复可能改变后续 V0/V1 的 LLM 采样行为。既有 V0/V1 Pilot artifacts 保留为修复前结果，不覆盖、不删除；之后的对照实验必须另存并明确标记为 **seed/protocol compatibility-fixed**，不得直接把新旧结果混作同一代码版本的重复 trial。

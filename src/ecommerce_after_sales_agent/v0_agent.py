@@ -4,13 +4,20 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from tau2.agent.base_agent import HalfDuplexAgent, ValidAgentInputMessage
+from tau2.agent.base.llm_config import LLMConfigMixin
+from tau2.agent.base_agent import (
+    HalfDuplexAgent,
+    ValidAgentInputMessage,
+    is_valid_agent_history_message,
+)
 from tau2.data_model.message import (
     APICompatibleMessage,
     AssistantMessage,
     Message,
     MultiToolMessage,
     SystemMessage,
+    ToolMessage,
+    UserMessage,
 )
 from tau2.environment.tool import Tool
 from tau2.utils.llm_utils import generate
@@ -31,7 +38,7 @@ class V0AgentState:
     messages: list[APICompatibleMessage] = field(default_factory=list)
 
 
-class V0Agent(HalfDuplexAgent[V0AgentState]):
+class V0Agent(LLMConfigMixin, HalfDuplexAgent[V0AgentState]):
     """Minimal real-LLM Agent without Tool execution or V1 reliability policies."""
 
     def __init__(
@@ -42,9 +49,15 @@ class V0Agent(HalfDuplexAgent[V0AgentState]):
         llm: str,
         llm_args: Optional[dict] = None,
     ) -> None:
-        super().__init__(tools=tools, domain_policy=domain_policy)
-        self.llm = llm
-        self.llm_args = dict(llm_args or {})
+        # Keep the official mixin first in the MRO: Text Orchestrator calls
+        # ``set_seed()`` before the first turn, and the mixin carries that
+        # per-trial seed into the subsequent official ``generate()`` call.
+        super().__init__(
+            tools=tools,
+            domain_policy=domain_policy,
+            llm=llm,
+            llm_args=llm_args,
+        )
 
     # 把开头定义的基础指令 和 官方retail policy合在一起
     # 真实 LLM 调用时，这个会作为 system message发送
@@ -62,12 +75,43 @@ class V0Agent(HalfDuplexAgent[V0AgentState]):
     ) -> V0AgentState:
         """Initialize system context and preserve valid resumable message history."""
         history = list(message_history) if message_history is not None else []
-        # 不接受 MultiToolMessage，除非展开
-        if any(isinstance(message, MultiToolMessage) for message in history):
-            raise ValueError("Message history must contain flattened ToolMessage entries")
+        self._validate_history(history)
         return V0AgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=history,
+        )
+
+    @staticmethod
+    def _validate_history(history: list[Message]) -> None:
+        """Apply the official text-agent resumable-history contract."""
+        if not all(is_valid_agent_history_message(message) for message in history):
+            raise ValueError(
+                "Message history must contain only AssistantMessage, non-tool-call "
+                "UserMessage, or ToolMessage requested by assistant."
+            )
+
+    @staticmethod
+    def _validate_input_message(message: object) -> None:
+        """Reject inputs that the text Harness must never route to an Agent."""
+        if isinstance(message, UserMessage):
+            if message.is_audio:
+                raise ValueError("User message cannot be audio in Retail text mode")
+            if message.is_tool_call():
+                raise ValueError("Agent cannot receive a UserMessage tool call")
+            return
+        if isinstance(message, ToolMessage):
+            if message.requestor != "assistant":
+                raise ValueError("Agent can only receive ToolMessage requested by assistant")
+            return
+        if isinstance(message, MultiToolMessage):
+            for tool_message in message.tool_messages:
+                if tool_message.requestor != "assistant":
+                    raise ValueError(
+                        "Agent can only receive MultiToolMessage entries requested by assistant"
+                    )
+            return
+        raise TypeError(
+            "V0 Agent input must be UserMessage, ToolMessage, or MultiToolMessage"
         )
 
     # 每一回合 Agent 被 Harness 调用时的入口
@@ -80,6 +124,8 @@ class V0Agent(HalfDuplexAgent[V0AgentState]):
         returns a Tool Call, the official Orchestrator routes it to the
         Environment and later supplies its ToolMessage back to this method.
         """
+        self._validate_input_message(message)
+
         # 1. 保存新输入（如遇 MultiToolMessage，先展开再逐条追加）
         # 例如 "我想更换订单中的机械键盘。"
         if isinstance(message, MultiToolMessage):

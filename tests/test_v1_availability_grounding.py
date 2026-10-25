@@ -122,6 +122,41 @@ def test_v1_keeps_raw_tool_result_and_injects_only_verified_grounding(
     assert "unavailable_variants=1" in grounding
 
 
+def test_v1_seed_reaches_generate_and_grounding_still_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v1_agent(
+        [], "Policy", llm="mock/model", llm_args={"temperature": 0.0, "top_p": 0.9}
+    )
+    state = agent.get_init_state()
+    calls = _install_mock_generate(monkeypatch)
+    agent.set_seed(271828)
+
+    _, state = agent.generate_next_message(
+        _tool_message("product", _product_result("Backpack", "bag-2", [True, False])),
+        state,
+    )
+
+    assert calls[0]["seed"] == 271828
+    assert calls[0]["temperature"] == 0.0
+    assert calls[0]["top_p"] == 0.9
+    assert state.availability_facts["bag-2"].available_variants == 1
+
+
+def test_v1_uses_inherited_tool_requestor_validation() -> None:
+    agent = create_v1_agent([], "Policy", llm="mock/model")
+    state = agent.get_init_state()
+    user_tool_result = ToolMessage(
+        id="user-call",
+        role="tool",
+        requestor="user",
+        content="not for agent",
+    )
+
+    with pytest.raises(ValueError, match="requested by assistant"):
+        agent.generate_next_message(user_tool_result, state)
+
+
 def test_v1_rebuilds_facts_from_flattened_resumable_history() -> None:
     raw = _product_result("Desk Lamp", "lamp-4", [True, False])
     tool_message = _tool_message("prior-product", raw)

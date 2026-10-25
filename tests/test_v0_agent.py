@@ -4,6 +4,7 @@ import pytest
 from tau2.data_model.message import (
     AssistantMessage,
     MultiToolMessage,
+    SystemMessage,
     ToolCall,
     ToolMessage,
     UserMessage,
@@ -66,6 +67,29 @@ def test_user_message_calls_llm_and_persists_text_response(
     assert calls[0]["call_name"] == "ecommerce_after_sales_v0"
     assert calls[0]["temperature"] == 0
     assert [message.role for message in state.messages] == ["user", "assistant"]
+
+
+def test_v0_seed_reaches_generate_without_overriding_other_llm_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The official Harness calls set_seed() before the first text turn."""
+    agent = create_v0_agent(
+        [], "Policy", llm="mock/model", llm_args={"temperature": 0.3, "max_tokens": 77}
+    )
+    calls: list[dict] = []
+
+    def fake_generate(**kwargs: object) -> AssistantMessage:
+        calls.append(kwargs)
+        return AssistantMessage.text("Seeded reply")
+
+    monkeypatch.setattr(v0_module, "generate", fake_generate)
+    agent.set_seed(314159)
+    agent.generate_next_message(UserMessage.text("Hello"), agent.get_init_state())
+
+    assert calls[0]["seed"] == 314159
+    assert calls[0]["temperature"] == 0.3
+    assert calls[0]["max_tokens"] == 77
+    assert agent.llm_args == {"temperature": 0.3, "max_tokens": 77, "seed": 314159}
 
 
 def test_tool_call_is_returned_but_not_executed_by_agent(
@@ -135,6 +159,61 @@ def test_v0_history_preserves_multi_turn_message_order(
         ("user", "Second"),
         ("assistant", "Reply"),
     ]
+
+
+def test_v0_accepts_official_flattened_history_and_rejects_invalid_history() -> None:
+    agent = create_v0_agent([], "Policy", llm="mock/model")
+    valid_history = [
+        UserMessage.text("Earlier request"),
+        AssistantMessage.text("Earlier answer"),
+        _tool_message("assistant-result"),
+    ]
+
+    state = agent.get_init_state(valid_history)
+    assert state.messages == valid_history
+
+    with pytest.raises(ValueError, match="ToolMessage requested by assistant"):
+        agent.get_init_state(
+            [
+                ToolMessage(
+                    id="user-result",
+                    role="tool",
+                    requestor="user",
+                    content="not for agent",
+                )
+            ]
+        )
+    with pytest.raises(ValueError, match="Message history"):
+        agent.get_init_state([SystemMessage(role="system", content="not history")])
+
+
+def test_v0_validates_tool_requestor_and_preserves_legal_multi_tool_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v0_agent([], "Policy", llm="mock/model")
+    state = agent.get_init_state()
+    _install_mock_generate(monkeypatch, AssistantMessage.text("OK"))
+
+    legal_multi = MultiToolMessage(
+        role="tool", tool_messages=[_tool_message("one"), _tool_message("two")]
+    )
+    _, state = agent.generate_next_message(legal_multi, state)
+    assert [message.id for message in state.messages if isinstance(message, ToolMessage)] == [
+        "one",
+        "two",
+    ]
+
+    invalid_tool = ToolMessage(
+        id="user-call", role="tool", requestor="user", content="wrong recipient"
+    )
+    with pytest.raises(ValueError, match="requested by assistant"):
+        agent.generate_next_message(invalid_tool, state)
+    with pytest.raises(ValueError, match="MultiToolMessage entries"):
+        agent.generate_next_message(
+            MultiToolMessage(role="tool", tool_messages=[invalid_tool]), state
+        )
+    with pytest.raises(TypeError, match="UserMessage, ToolMessage, or MultiToolMessage"):
+        agent.generate_next_message(AssistantMessage.text("wrong input"), state)  # type: ignore[arg-type]
 
 
 def test_v0_factory_registry_and_builder_are_compatible() -> None:
