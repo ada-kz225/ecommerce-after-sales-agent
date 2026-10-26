@@ -415,3 +415,96 @@ PYTHONPATH=src ../tau2-bench/.venv/bin/python \
 - 这组证据**不支持**“V1 存在已确认的系统性换货退化”：V1 在 Task 1 为 `3/3`，总体为 `5/6`；但 V1 Task 0 仍有 `1/3` 的静态 write mismatch，样本不足以排除更广泛回归。
 - 也没有因果证据表明 Grounding 导致 V1 的 Task 0 replacement 选择。V1 request 中会加入 Product availability facts，但这些 aggregate facts 不指定应选哪个具体 variant；V0 和 V1 的独立 LLM/User trajectories 也不能作为受控消融。
 - 未发现需要立即修复的 Agent 代码缺陷。建议将 Tasks 0–1 保留为回归 sentinel，下一步转向修复后 Tasks 2–4 的多 trial Grounding stability 对照；这是该机制的目标失败模式，且尚未在修复后版本重复验证。
+
+## 2026-10-25 — 修复后 V1-1 Grounding 稳定性重复对照（Tasks 2–4，3 trials）
+
+### 范围与可比性
+
+- **目的：** 验证 Seed/History compatibility-fixed 后，V1-1 Availability-aware Factual Grounding 在其目标失败模式（可用 T-shirt variant 数）上的重复表现；不是全 Retail Benchmark。
+- **Artifacts：** V0 为 `../tau2-bench/data/simulations/retail-v0-seed-protocol-fixed-grounding-repeat-2-4-t3/results.json`；V1 为 `../tau2-bench/data/simulations/retail-v1-seed-protocol-fixed-grounding-repeat-2-4-t3/results.json`。两份各含 9 条 simulation；保存的 Agent `llm_debug` record 的 `call_name` 分别为 `ecommerce_after_sales_v0` 与 `ecommerce_after_sales_v1`。
+- **相同配置：** Retail `base` split、Tasks `2,3,4`、每 task `3` trials、Agent/User 均为 `openai/gpt-4.1-mini`、双方 `temperature=0.0`、run seed `42`、`max_steps=30`、`max_errors=10`、`max_retries=0`、`max_concurrency=1`、`workers=0`、`auto_review=false`、`verbose_logs=true` 与 LLM log mode `all`。除 Agent 和 `save_to` 外，配置相同；trial `0/1/2` 的 seed 均为 `670487/116739/26225`。
+- **评分边界：** 正常 `user_stop` 的 8 条/版本进入评测；各版本各有 1 条 `max_steps`，该条的 DB、Action、NL 均为未评分（不是失败的 NL assertion）。Reward 仍由本组任务的 `DB + NL_ASSERTION` 决定，Action Checks 仅作诊断。
+
+### 逐 task / trial 结果
+
+`—` 表示 Harness 因 `max_steps` 未进入正常评测，并非零分的 DB/Action/NL 指标。
+
+| Agent | Task / trial / seed | Reward / Termination | DB | Action | NL | 耗时 |
+| --- | --- | --- | ---: | --- | --- | ---: |
+| V0 | 2 / 0 / 670487 | `0.0` / `user_stop` | 1.0 | 10/11 | 0/1 | 23.73 s |
+| V0 | 2 / 1 / 116739 | `0.0` / `user_stop` | 1.0 | 10/11 | 0/1 | 21.05 s |
+| V0 | 2 / 2 / 26225 | `0.0` / `user_stop` | 0.0 | 3/11 | 0/1 | 12.64 s |
+| V0 | 3 / 0 / 670487 | `0.0` / `user_stop` | 1.0 | 11/12 | 0/1 | 24.48 s |
+| V0 | 3 / 1 / 116739 | `0.0` / `user_stop` | 1.0 | 11/12 | 0/1 | 17.23 s |
+| V0 | 3 / 2 / 26225 | `0.0` / `user_stop` | 1.0 | 11/12 | 0/1 | 21.21 s |
+| V0 | 4 / 0 / 670487 | `0.0` / `user_stop` | 1.0 | 12/13 | 0/1 | 17.02 s |
+| V0 | 4 / 1 / 116739 | `0.0` / `user_stop` | 1.0 | 12/13 | 0/1 | 17.50 s |
+| V0 | 4 / 2 / 26225 | `0.0` / `max_steps` | — | — | — | 21.20 s |
+| V1 | 2 / 0 / 670487 | `1.0` / `user_stop` | 1.0 | 10/11 | 1/1 | 23.04 s |
+| V1 | 2 / 1 / 116739 | `0.0` / `max_steps` | — | — | — | 24.70 s |
+| V1 | 2 / 2 / 26225 | `1.0` / `user_stop` | 1.0 | 9/11 | 1/1 | 23.64 s |
+| V1 | 3 / 0 / 670487 | `1.0` / `user_stop` | 1.0 | 11/12 | 1/1 | 19.11 s |
+| V1 | 3 / 1 / 116739 | `1.0` / `user_stop` | 1.0 | 11/12 | 1/1 | 19.91 s |
+| V1 | 3 / 2 / 26225 | `1.0` / `user_stop` | 1.0 | 11/12 | 1/1 | 17.40 s |
+| V1 | 4 / 0 / 670487 | `1.0` / `user_stop` | 1.0 | 12/13 | 1/1 | 18.50 s |
+| V1 | 4 / 1 / 116739 | `0.0` / `user_stop` | 0.0 | 10/13 | 1/1 | 20.44 s |
+| V1 | 4 / 2 / 26225 | `1.0` / `user_stop` | 1.0 | 12/13 | 1/1 | 18.00 s |
+
+**汇总：** V0 为 **0/9** Reward 成功，V1 为 **7/9**。在可评分的 8 条中，V0/V1 的 DB 均为 `7/8`，但 NL assertion 分别是 **0/8** 与 **8/8**。因此 V1 的收益集中在本次目标事实陈述，不足以外推为全 benchmark 的稳定提升。
+
+### Grounding 注入与库存回答
+
+**已确认事实**
+
+- V1 的 9 条 simulation 的实际 Agent `llm_debug` request 都在 Product Tool Result 之后含有 `<verified_inventory_facts>`；T-shirt 条目为 `total_variants=12`、`available_variants=10`、`unavailable_variants=2`。这是动态 Context 已进入真实 LLM request 的直接 artifact 证据。
+- 8 条正常评分的 V1 trajectory 都明确回答 10 个 available variants，且 NL assertion 均通过；相同 8 条 V0 均未满足该 assertion（包含把总数当作可用数、给出其他数字或未明确给数字）。
+- 这说明机制确实向真实请求提供了正确的结构化可用性统计，且与正确回答同时出现；但 V0/V1 是独立的 Agent/User LLM 轨迹，未做“同一轨迹移除 Context”的消融，不能把全部 Reward 差异单独归因于 Grounding。
+
+### 两条 V1 失败轨迹（脱敏）
+
+#### Task 2 / trial 1 / seed 116739：`max_steps`
+
+**已确认事实**
+
+- inventory 查询和“10 个可用”回答已经完成；Agent 随后在用户同意查询 profile 后，未批量读取订单，而是跟随 User 依次读取四个候选 order：三个不匹配，再发起第四个 order read。
+- 最后一个 `get_order_details` 的 Tool Result 返回后，artifact 有 32 条 conversation message；Harness 已达到 `max_steps=30`，终止为 `max_steps`。没有后续 Agent turn，**没有调用** `return_delivered_order_items`，也没有完成关键 return write。
+- 官方 HalfDuplex Orchestrator 的 `step()` 在 `../tau2-bench/src/tau2/orchestrator/orchestrator.py` 约 840–948 行按角色/消息转移后递增 `step_count`；`_check_termination()` 约 755–771 行在非 Environment 等待状态下以 `step_count >= max_steps` 结束。因此最后一个 Environment Tool Result 会被保存，但 Agent 没有剩余 turn 消化它并发起 write。
+
+**解释边界与 Step Budget 启示**
+
+- 可见的额外消耗是多次“询问/提供一个 order ID/单独 read/说明不匹配”的往返，而不是 Tool Error；成功的 V1 Task 2 trials 则一次 MultiTool Call 读取五个订单。不能仅据此认定批量读取必然最优或由 Grounding 导致路径差异。
+- 该案例直接支持研究 Step-budget-aware planning：在进入多订单检索前让 Agent 看见剩余预算，并在已获得用户授权时优先合并独立 read，给确认、write 与最终回复保留 turn。它不证明应修改官方 `max_steps`。
+
+#### Task 4 / trial 1 / seed 116739：NL 正确、DB 失败
+
+**已确认事实**
+
+- Agent 完成认证、T-shirt inventory 与订单 reads，并正确回答 10 个 available variants；Grounding Context 已存在，故 NL assertion 为 `1/1`。
+- Agent 没有调用 `modify_pending_order_items`。当其说明修改需要 payment method 后，模拟 User 明确表示没有 Gift Card 或其他 payment method、不能继续；Agent 随后说明无法进行变更，User 正常结束会话。
+- 静态 gold action 却包含两个 `modify_pending_order_items` writes（及一条未调用的额外 product read），所以实际 diagnostics 为 `10/13`，最终 DB 与 golden replay 不同（`DB=0.0`）。这里没有 Tool Result 失败，因为根本没有 write Tool Call。
+
+**解释边界**
+
+- 该失败可确认是实际 User 对话分支未执行 gold 指定的两次写入，与 Grounding 的库存回答无冲突。artifact 不足以判定是 Agent payment-flow 决策、模拟 User 分支还是静态目标与实际对话之间的目标张力所致；不能归因为 Grounding 回归或 Tool defect。
+
+### Token、成本、延迟与 Judge 边界
+
+| 指标 | V0 | V1 |
+| --- | ---: | ---: |
+| 总 simulation 耗时 / 平均 | 176.06 s / 19.56 s | 184.75 s / 20.53 s |
+| Agent debug calls | 99 | 105 |
+| Agent prompt / completion tokens | 550,235 / 6,635 | 582,281 / 6,512 |
+| Agent debug-record Cost | $0.0832156 | $0.0907300 |
+| User debug calls | 52 | 55 |
+| User prompt / completion tokens | 57,348 / 1,994 | 60,902 / 1,949 |
+| User Cost（artifact/debug 对应） | $0.0214064 | $0.0222952 |
+| NL assertion Judge calls / Cost | 8 / $0.0300600 | 8 / $0.0301590 |
+
+- `results.json` 的 `agent_cost` 与 `agent_usage` 均为 `null`；表中的 Agent/User/Judge usage 与 Cost 来自保存的 verbose `llm_debug` response records 的可复查汇总，不能把 results 字段的缺失视为零。
+- 此次可见的 Judge 是每个正常评分条目的 `nl_assertions_eval`；`communicate_checks` 为空、`auto_review=false`，未发现 semantic communication Judge 或 auto-review 的额外调用/费用证据。以上金额是记录到的模型调用 Cost，未主张覆盖任何 provider 账单以外项目。
+
+### 结论与 V1-2 设计建议（未实施）
+
+- **V1-1 结论：** 在修复后、固定的 Tasks `2–4` 与 3 trials 中，真实 request 注入正确可用性统计，V1 的可评分 NL assertion 从 `0/8` 变为 `8/8`，Reward 从 `0/9` 变为 `7/9`。这是对目标机制的重复正向证据，但样本小、任务有选择性、存在独立随机对话，不能声称全 Retail Benchmark 的稳定提升或严格因果效应。
+- **是否进入 V1-2：建议进入设计与最小实现。** Task 2 / trial 1 已显示一个明确的 budget 耗尽失败，且官方 Harness 的硬 cap 不会为最后 Tool Result 额外保留 Agent turn。机制应只向 Agent 提供可读的剩余 step 预算/阈值提示，并在低预算时要求合并彼此独立的 reads、优先完成已确认 write 或给出最终回复；不得自行修改 Harness 计数、跳过 User confirmation 或直接执行 Tool。
+- **接口前提与最小测试：** 已检查的官方 Agent 调用路径没有把 Orchestrator 的 `step_count`/`max_steps` 直接传入 `generate_next_message()`；V1-2 实现前必须先验证如何在不改官方 Harness 的条件下提供准确预算（例如由个人 Agent 根据官方消息转移规则维护保守估计，或由独立启动入口只注入配置上限）。以 Mock `generate()` / message sequence 构造接近 cap 的多订单场景，断言低预算 context 出现、正常预算不改变既有消息/Tool schema；另覆盖 Tool Result 后优先收束、合法 MultiToolMessage、确认不足时不写入。先做无 API 单元测试，再以与 V0 同配置的独立 Retail 对照验证是否减少 `max_steps`，同时报告 DB/NL/Action、Token、成本和可能的写入回归。

@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 已完成一次真实 Retail Smoke Test 和固定 Tasks `0–4` 的首次 Pilot；阶段 3B 的 V1-1 Availability-aware Factual Grounding 已完成首次真实 Pilot。
-- **当前进度：** 已完成官方 Retail Smoke Test、官方 5-task Pilot Baseline、官方源码梳理、个人 V0 的 Task `0` Smoke Test / 5-task Pilot，以及 V1 availability grounding 的去重/过期事实修复、单元测试和首次真实 5-task Pilot。详见 [实验记录](docs/EXPERIMENT_LOG.md)；V1 本次为 `3/5`、V0 为 `2/5`，但均是单 trial 小样本，不能证明稳定提升。
-- **下一步：** 已完成 **seed/protocol compatibility-fixed** 的 Tasks `0–1` 换货重复对照；将其作为后续回归 sentinel。下一步以相同修复版本转向 Tasks `2–4` 的多 trial Grounding stability 对照，并完整保留 Agent/User/Judge usage 与成本边界；修复前后 artifact 必须分开记录。
+- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 已完成一次真实 Retail Smoke Test 和固定 Tasks `0–4` 的首次 Pilot；阶段 3B 的 V1-1 Availability-aware Factual Grounding 已完成首次真实 Pilot 及修复后的重复验证。
+- **当前进度：** 已完成官方 Retail Smoke Test、官方 5-task Pilot Baseline、官方源码梳理、个人 V0 的 Task `0` Smoke Test / 5-task Pilot，以及 V1 availability grounding 的去重/过期事实修复、单元测试、首次真实 5-task Pilot 和修复后两组 3-trial 对照。详见 [实验记录](docs/EXPERIMENT_LOG.md)：在针对性的 Tasks `2–4` 重复实验中，V1 为 `7/9`、V0 为 `0/9`，可评分 NL assertion 为 `8/8` 对 `0/8`；这是目标机制的正向证据，不是完整 Benchmark 或稳定性能结论。
+- **下一步：** 保留 Tasks `0–1` 作为换货回归 sentinel；依据 Task 2 的 `max_steps` 失败，进入 V1-2 Step-budget-aware Planning 的最小设计与无 API 测试。修复前后 artifact 必须分开记录，后续真实对照继续保留 Agent/User/Judge usage 与成本边界。
 
 ## Milestone 总览
 
@@ -93,8 +93,9 @@
 - [x] 在可比的首次真实 Retail 5-task Pilot 验证 V1-1：Tasks `2–4` 的 availability NL assertions 通过；同时发现 Tasks `0`、`1` 的 exchange write / DB 回归，尚未证明其因果来源或稳定性。
 - [x] 修复 V0/V1 的 Harness seed 传递和 Retail text message/requestor compatibility，并以 Mock 回归验证；该修复可能改变后续 LLM 行为，修复后实验须使用新 artifact。
 - [x] 以修复后 V0/V1 完成 Tasks `0–1`、各 3 trials 的换货对照（V0 `4/6`、V1 `5/6`）；确认所有真实 Agent LLM request 携带相应 trial seed。结果不足以证明稳定提升或排除更广泛回归。
-- [ ] 在相同修复后配置下，对 Tasks `2–4` 做多 trial V0/V1 Grounding stability 对照；记录 NL assertions、DB/Action、Token/费用与可能回归。
-- [ ] 在扩大/重复 V0–V1 对照后，再决定是否实现并测试 **step-budget-aware planning and completion**。
+- [x] 在相同修复后配置下，对 Tasks `2–4` 完成多 trial V0/V1 Grounding stability 对照；V0 `0/9`、V1 `7/9`，可评分 NL assertion 为 V0 `0/8`、V1 `8/8`。结果仅适用于该固定小样本，详见实验记录。
+- [x] 基于重复实验与官方 Harness step 规则，确定可研究 **step-budget-aware planning and completion**；仅完成设计评估，尚未编码或进行真实验证。
+- [ ] 先确认不改官方 Harness 时 Agent 获得/保守估计剩余 step 的契约，再为 V1-2 实现最小的 budget context，并以 Mock 轨迹验证低预算时的读操作合并/完成优先级；不得绕过 Harness、用户确认或 Tool 执行边界。
 - [ ] Tool Error 结构化恢复、重复失败 Tool Call 检测/合理终止、写操作前 confirmation / permission 检查与关键写操作后状态验证，待出现 V0 对应失败证据后再排序选择。
 - [ ] 为每项选定机制编写测试，并保留触发它的失败案例或最小复现。
 - [ ] 扩大或重复可比的 V0 / V1 对照，记录收益、Tasks `0`/`1` 回归是否复现、Agent/User/Judge 代价和局限性。
@@ -102,7 +103,7 @@
 
 **验收标准：** V1 的每项增强有可运行测试；对照实验不将单次随机结果表述为稳定提升。
 
-**当前状态：** 3A 的固定响应 Agent、V0 Mock 接口测试、真实 Task `0` Smoke Test 与首次可比的 5-task Pilot 均已完成；3B 的 availability grounding 已完成去重/过期事实修复、Mock 回归、首次真实 V1 Pilot（`3/5`）以及修复后 Tasks `0–1` 的 3-trial 对照（V0 `4/6`、V1 `5/6`）。换货路径仍有静态目标 mismatch 的随机分支，尚无 Grounding 因果证据；下一项验证是 Tasks `2–4` 的修复后稳定性，不提前开始 step-budget 机制。
+**当前状态：** 3A 的固定响应 Agent、V0 Mock 接口测试、真实 Task `0` Smoke Test 与首次可比的 5-task Pilot 均已完成；3B 的 availability grounding 已完成去重/过期事实修复、Mock 回归、首次真实 V1 Pilot（`3/5`）、修复后 Tasks `0–1` 的 3-trial 对照（V0 `4/6`、V1 `5/6`），以及修复后 Tasks `2–4` 的 3-trial 对照（V0 `0/9`、V1 `7/9`）。后者提供了 availability NL assertion 的重复正向证据，但未证明全 Retail Benchmark 提升；换货路径仍有静态目标 mismatch 的随机分支。下一项是 V1-2 的最小 Step Budget 实现与无 API 测试。
 
 ## 4. Evaluation 与可靠性测试（必做）
 

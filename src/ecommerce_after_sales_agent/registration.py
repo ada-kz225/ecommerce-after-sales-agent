@@ -6,16 +6,23 @@
 #   → build_agent(name, environment)
 #   → FixedResponseAgent(...)
 
+from functools import partial
+from typing import Callable
+
 from tau2.registry import registry
 
 from .minimal_agent import create_fixed_response_agent
 from .v0_agent import create_v0_agent
 from .v1_agent import create_v1_agent
+from .v1_2_agent import create_v1_2_agent
 
 AGENT_NAME = "ecommerce_after_sales_fixed_response"
 # 这是 官方 Builder 查找我的 Agent 时使用的名字
 V0_AGENT_NAME = "ecommerce_after_sales_v0"
 V1_AGENT_NAME = "ecommerce_after_sales_v1"
+V1_2_AGENT_NAME = "ecommerce_after_sales_v1_2"
+
+_v1_2_factories: dict[tuple[str, int, bool], Callable[..., object]] = {}
 
 
 def register_fixed_response_agent(name: str = AGENT_NAME) -> str:
@@ -54,18 +61,44 @@ def register_v1_agent(name: str = V1_AGENT_NAME) -> str:
     return name
 
 
+def register_v1_2_agent(
+    *, max_steps: int, fresh_start: bool = True, name: str = V1_2_AGENT_NAME
+) -> str:
+    """注册带显式预算配置的 V1-2 Factory，且不把预算传给 LLM。"""
+    if max_steps <= 0:
+        raise ValueError("max_steps must be positive")
+    key = (name, max_steps, fresh_start)
+    factory = _v1_2_factories.get(key)
+    if factory is None:
+        factory = partial(
+            create_v1_2_agent, max_steps=max_steps, fresh_start=fresh_start
+        )
+        _v1_2_factories[key] = factory
+    existing = registry.get_agent_factory(name)
+    if existing is None:
+        registry.register_agent_factory(factory, name)
+    elif existing is not factory:
+        raise ValueError(
+            f"Agent name '{name}' is already registered with different V1-2 budget settings"
+        )
+    return name
+
+
 def main() -> None:
     """Register the Agent and prove discovery without running a Simulation."""
     fixed_name = register_fixed_response_agent()
     v0_name = register_v0_agent()
     v1_name = register_v1_agent()
+    v1_2_name = register_v1_2_agent(max_steps=30)
     if registry.get_agent_factory(fixed_name) is not create_fixed_response_agent:
         raise RuntimeError("Fixed-response Agent factory could not be discovered")
     if registry.get_agent_factory(v0_name) is not create_v0_agent:
         raise RuntimeError("V0 Agent factory could not be discovered")
     if registry.get_agent_factory(v1_name) is not create_v1_agent:
         raise RuntimeError("V1 Agent factory could not be discovered")
-    print(f"Registered tau2 Agent factories: {fixed_name}, {v0_name}, {v1_name}")
+    if registry.get_agent_factory(v1_2_name) is None:
+        raise RuntimeError("V1-2 Agent factory could not be discovered")
+    print(f"Registered tau2 Agent factories: {fixed_name}, {v0_name}, {v1_name}, {v1_2_name}")
 
 
 if __name__ == "__main__":
