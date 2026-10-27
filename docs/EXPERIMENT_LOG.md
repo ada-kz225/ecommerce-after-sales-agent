@@ -508,3 +508,134 @@ PYTHONPATH=src ../tau2-bench/.venv/bin/python \
 - **V1-1 结论：** 在修复后、固定的 Tasks `2–4` 与 3 trials 中，真实 request 注入正确可用性统计，V1 的可评分 NL assertion 从 `0/8` 变为 `8/8`，Reward 从 `0/9` 变为 `7/9`。这是对目标机制的重复正向证据，但样本小、任务有选择性、存在独立随机对话，不能声称全 Retail Benchmark 的稳定提升或严格因果效应。
 - **是否进入 V1-2：建议进入设计与最小实现。** Task 2 / trial 1 已显示一个明确的 budget 耗尽失败，且官方 Harness 的硬 cap 不会为最后 Tool Result 额外保留 Agent turn。机制应只向 Agent 提供可读的剩余 step 预算/阈值提示，并在低预算时要求合并彼此独立的 reads、优先完成已确认 write 或给出最终回复；不得自行修改 Harness 计数、跳过 User confirmation 或直接执行 Tool。
 - **接口前提与最小测试：** 已检查的官方 Agent 调用路径没有把 Orchestrator 的 `step_count`/`max_steps` 直接传入 `generate_next_message()`；V1-2 实现前必须先验证如何在不改官方 Harness 的条件下提供准确预算（例如由个人 Agent 根据官方消息转移规则维护保守估计，或由独立启动入口只注入配置上限）。以 Mock `generate()` / message sequence 构造接近 cap 的多订单场景，断言低预算 context 出现、正常预算不改变既有消息/Tool schema；另覆盖 Tool Result 后优先收束、合法 MultiToolMessage、确认不足时不写入。先做无 API 单元测试，再以与 V0 同配置的独立 Retail 对照验证是否减少 `max_steps`，同时报告 DB/NL/Action、Token、成本和可能的写入回归。
+
+## 2026-10-26 — V1-1 compliant 与 V1-2 Step Budget 对照（Tasks 2–4，3 trials）
+
+### 范围、前置修复与可比性
+
+- 首次 V1-2 Pilot 的 9 条均因 `MultipleToolCallsError` 成为 Infra Error，**不纳入本节评分对照**，原 artifact 保留。之后两组都使用相同的 `parallel_tool_calls=false`、至多一次安全重生成和最终不含 Tool Call 的降级逻辑；本节两组均为 **0 Infra Error**。
+- 对照 artifact：V1-1 compliant 为 `../tau2-bench/data/simulations/retail-v1-1-compliant-grounding-repeat-2-4-t3/results.json`；V1-2 为 `../tau2-bench/data/simulations/retail-v1-2-compliant-step-budget-repeat-2-4-t3/results.json`。两者记录的官方 `git_commit` 均为 `777928927bdef8e98d7066168102e2b6637d70f2`，Retail `base`、Tasks `2/3/4`、3 trials、run seed `42`、trial seed `670487/116739/26225`、Agent/User `openai/gpt-4.1-mini`、双方 `temperature=0.0`、`max_steps=30`、`max_errors=10`、Judge 均一致；唯一预期机制差异是 V1-2 额外的 Budget Context。`results.json` 未保存个人仓库 source hash，故无法仅凭 artifact 独立证明两次运行使用完全相同的个人源码快照。
+- 两组的 `max_retries` 在保存的 `info` 中为 `null`，不能只用结果文件复核启动入口传入的 `0`；两者该字段相同。以下比较不把它当作组间差异。
+
+### 逐 Trial 对照
+
+记法：`R/Term`=Reward/Termination；`H`=由保存 trajectory 的消息转移推得的 Harness steps（官方结果未持久化独立 `step_count`）；`A/U`=Agent LLM decisions/User turns；`T`=实际提交给 Environment 的 Tool Calls；`Retry`=本机制的 multi-tool regenerate 次数；`A$/U$`=Agent debug-record Cost/User Cost；`sec`=duration。`MAX` 条不会进入正常 Evaluation，因此 DB/Action/NL 均为未评分。
+
+| Task / trial / seed | V1-1 compliant | V1-2 Step Budget |
+| --- | --- | --- |
+| 2 / 0 / 670487 | `0/user_stop`; H15, A7/U5, T3, Retry0; $0.0051540/$0.0022328; 16.94s | `0/MAX`; H31, A15/U6, T10, Retry0; $0.0224816/$0.0024324; 31.00s |
+| 2 / 1 / 116739 | `0/user_stop`; H25, A12/U7, T6, Retry0; $0.0096452/$0.0026740; 21.33s | `0/user_stop`; H27, A13/U5, T9, Retry0; $0.0188036/$0.0019956; 24.64s |
+| 2 / 2 / 26225 | `0/MAX`; H31, A15/U6, T10, Retry0; $0.0125956/$0.0026080; 26.61s | `0/MAX`; H30, A15/U5, T10, Retry0; $0.0224104/$0.0020032; 28.10s |
+| 3 / 0 / 670487 | `1/user_stop`; H29, A14/U5, T10, Retry0; $0.0132340/$0.0018292; 22.84s | `0/MAX`; H30, A15/U5, T10, Retry0; $0.0240936/$0.0021240; 26.32s |
+| 3 / 1 / 116739 | `1/user_stop`; H29, A14/U5, T10, Retry0; $0.0122736/$0.0019124; 21.70s | `1/user_stop`; H29, A14/U5, T10, Retry0; $0.0213196/$0.0018124; 29.35s |
+| 3 / 2 / 26225 | `0/MAX`; H30, A15/U4, T11, Retry0; $0.0123092/$0.0016716; 23.48s | `1/user_stop`; H29, A14/U5, T10, Retry0; $0.0155568/$0.0020796; 24.66s |
+| 4 / 0 / 670487 | `0/MAX`; H30, A15/U4, T11, Retry0; $0.0126212/$0.0015720; 22.98s | `0/MAX`; H30, A15/U4, T11, Retry0; $0.0249316/$0.0018528; 25.28s |
+| 4 / 1 / 116739 | `0/MAX`; H30, A15/U4, T11, Retry0; $0.0134088/$0.0018396; 21.79s | `0/MAX`; H30, A15/U4, T11, Retry0; $0.0249340/$0.0017968; 25.99s |
+| 4 / 2 / 26225 | `1/user_stop`; H29, A14/U4, T11, Retry0; $0.0119448/$0.0015592; 23.03s | `0/MAX`; H30, A15/U4, T11, Retry0; $0.0233976/$0.0015524; 25.07s |
+
+**汇总：** V1-1 compliant 为 **3/9**、4 次 `MAX_STEPS`；V1-2 为 **2/9**、6 次 `MAX_STEPS`。V1-2 独有的 `MAX_STEPS` 是 Task 2/trial 0、Task 3/trial 0、Task 4/trial 2；反向地，Task 3/trial 2 仅 V1-1 达到上限而 V1-2 成功。已评分的 NL assertions 两组均为正确，故本实验不显示 Grounding 事实回答回归。
+
+### Task 2：预算耗尽与 Smoke 差异
+
+**已确认事实**
+
+- V1-2 Task 2/trial 0 和 trial 2 都完成身份认证、产品查询、profile 查询、5 次串行 `get_order_details`，并提交了 `return_delivered_order_items`；最后的 Environment Tool Result 已写入 trajectory，但随后以 `MAX_STEPS` 结束，未进入正常评分。trial 0 为 H31，trial 2 为 H30。V1-1 trial 2 也在同一条长链路后 `MAX_STEPS`。
+- V1-2 trial 0 在五个订单读完后，先给出匹配结论，User 确认，再给出一次完整 return 摘要并再次等待确认，最后才提交 write。此前 V1-2 Smoke（同为 Task 2/trial 0 seed `670487`）在读取五个订单后直接给出完整写入确认，30 条消息后正常 `USER_STOP`、Reward `1.0`。两条 trace 的主要区别是 LLM 决策路径：Smoke 在 Product Tool Result 后连续读取 profile/订单；本次 trial 0 先向 User 回复并等待其要求检查所有订单，且在写入前多了一轮确认。
+- 5 个候选订单的逐个 read 在“每轮至多一个 Tool Call”的 Retail Policy 下无法并为一个 Environment turn；这些 read 本身是定位订单的业务工作。可合法节省的是：在已有原始请求和已认证身份授权下，不重复询问是否应检查已知候选订单；在识别正确订单后，直接一次列出完整 write details 并获取明确确认，而非拆成“确认订单”后再重复确认写入。是否采纳仍须逐条满足 policy 的确认要求。
+
+**预算计数核查**
+
+- V1-2 的真实 debug request 均含 `<step_budget>`；在 Product Tool Result 之后的后续 request 含 Grounding Context。Task 2/trial 0 的 15 次 Agent request 依次报告 `estimated_steps_used=2,4,...,30`；没有发现重复输入造成的跳跃或重复扣减。因此**没有发现状态计数累积错误**。
+- 但该数字是 Agent 在本次 decision 完成后的本地重构值，不是 Harness 在调用 LLM 当下的 `step_count`。且策略没有为“提交 write 后的 Environment 回传、最终 Agent 回复/正常终止”保留可执行余量：最后一次 request 已报告 remaining `0`，模型仍提交 return。由官方 `orchestrator.py` 的 Environment termination 例外可见，Tool Result 仍会落盘而后续正常流程被 cap 截断。这是已确认的**预算语义/规划缺口**，不是已证实的双重计数 Bug。
+- 低预算提示是否直接导致额外解释、询问或 Tool 决策偏移，artifact 没有可作因果识别的对照 prompt；只可确认 V1-2 在三条独有 `MAX` 中各多一个 Agent decision，不能断言 Budget Context 是原因。
+
+### Multi-Tool 约束、Task 3/4 与成本
+
+- 两组共 252 次 Agent debug request 都显式传入 `parallel_tool_calls=false`，且 `multi_tool_retry` 调用为 0；每个已执行 Environment turn 最多包含一个 Tool Call。故本组安全恢复没有增加额外 `generate()`、Token 或 Harness steps，也没有 Infra Error。它仍是一条潜在费用路径：若未来触发，最多会新增一次 Agent LLM request，但本数据中未发生。
+- Task 3 的 V1-2 trial 0 与 V1-1 trial 2 呈相反结果，而两组成功/失败条目均围绕相同的认证、库存、5 次订单 read 和一次 `modify_pending_order_items` 链路。Task 4 中两组 trial 0/1 都在两次合法 modify write 链路附近触顶，V1-1 trial 2 正常结束而 V1-2 trial 2 触顶。未见 Tool Error。该交叉模式支持“对话/模型决策及 User Simulator 分支会影响是否留出最后一 turn”，不足以归因为 Step Budget 或业务 Tool 故障。
+
+| 可获得指标 | V1-1 compliant | V1-2 |
+| --- | ---: | ---: |
+| Reward 成功 / `MAX_STEPS` | 3/9 / 4 | 2/9 / 6 |
+| 总耗时 | 200.70 s | 240.41 s |
+| Agent debug calls | 121 | 131 |
+| Agent prompt / completion tokens | 697,934 / 5,616 | 774,806 / 5,964 |
+| Agent debug-record Cost | $0.1031860 | $0.1979288 |
+| `results.json` User Cost | $0.0178988 | $0.0176492 |
+| 可见 NL Judge calls / Cost | 5 / $0.0153563 | 3 / $0.0105667 |
+
+`results.json` 的 `agent_cost`/`agent_usage` 仍为空；Agent 与 Judge 数值来自保存的 `llm_debug`。未见 semantic communication Judge 或 auto-review 证据。V1-2 成本增幅与每次请求附加 Budget Context、以及本组多出的 10 次 Agent decision 同时出现；这只是可观测相关因素，不能拆分为单一原因。
+
+### 结论与限制
+
+- **A（预算计数缺陷）：低。** 未发现重复扣减或系统性漂移；但“post-decision 的估计值”不能替代 Harness 实时计数，也未编码收尾余量。
+- **B（Budget Prompt 无效/副作用）：中。** 结果为 2/9 对 3/9，独有 3 次 cap；但也有一次反向收益，且缺少同一模型输出的可控消融，不能确认因果。
+- **C（单 Tool Call 的路径限制）：高。** 5 次订单 read 已固定消耗多个角色转移，复杂写入任务在 `max_steps=30` 下空间很小；这是 Policy/Harness 约束，不是可绕过的缺陷。
+- **D（模型/User Simulator 随机性与业务分支）：中高。** 同 seed 的 Smoke 和本轮 Task 2/trial 0 走出不同路径，而 artifact 没有个人源码 hash 或 provider 确定性证明；不能将差异归给单一机制。
+
+本小样本不支持继续为现有 V1-2 Budget Prompt 直接付费扩展实验。建议先在无 API 测试中重新设计为“write 前明确 reserve 收尾转移、合并可合法的确认表述/候选订单授权”的保守策略，再用新的版本标签做最小 Smoke；若不先改变策略，停止本方向的付费复测。任何新实验仍不得跳过身份验证、订单校验或写操作确认。
+
+## 2026-10-27 — V1-2 Reserve Task 2 Smoke
+
+### 配置与结果
+
+- **Artifact：** `../tau2-bench/data/simulations/retail-v1-2-reserve-smoke-task2-t1/results.json`；Agent 为 `ecommerce_after_sales_v1_2_reserve`，Task `2`、trial `0`、seed `670487`。
+- **配置：** Retail `base`、Agent/User `openai/gpt-4.1-mini`、双方 `temperature=0.0`、run seed `42`、`max_steps=30`、`max_errors=10`、`max_retries=0`、`num_trials=1`、`max_concurrency=1`、`workers=0`、`auto_review=false`、verbose LLM debug logging。官方 results 记录的 Judge 配置仍为 semantic communication `gpt-5.5`，但本次可见评分调用是 NL assertion Judge。
+- **结果：** Reward `1.0`、DB Check `1.0`、NL Assertion `1/1`、Termination `USER_STOP`、无 Infra Error、duration `31.75 s`、User Cost `$0.0019824`。`results.json` 的 `agent_cost` 仍为 `null`；debug records 汇总为 14 次 Agent 调用、82,486 prompt tokens、635 completion tokens、Agent Cost `$0.0225288`。可见 NL Judge 为 1 次、Cost `$0.0037410`。
+
+### Reserve 路径与评分边界
+
+- 真实 Agent debug request 使用 `parallel_tool_calls=false`，未发现 `multi_tool_retry`；所有 Environment-bound Assistant Tool Call 均为单个调用。
+- Budget Context 在最终 return Tool Call 前记录 `estimated_steps_used=26`、`estimated_remaining_steps=4`。随后 trajectory 依次出现 return Tool Result、Agent completion 和 User stop；这是真实验证 4-step guard **允许路径**的证据。
+- 本次没有触发预算不足的 guard fallback，故“阻止 mutation”仍只有 Mock 证据，不能据此宣称真实运行中已经验证拦截能力。
+- Action Checks 为 `9/11`：一个额外 product read 与 return write 未匹配静态 gold action；但本 task 的 `reward_basis=DB + NL_ASSERTION`，两项都为 `1.0`，所以 Reward 仍为 `1.0`。这不是 Action Check 完全对齐的证据。
+- trajectory 中一条 `get_order_details` AssistantMessage 同时含 Tool Call 和非空文本，违背 Retail Policy 的“Tool Call 与 user-facing text 不同回合”提示；本运行的 `enforce_communication_protocol=false`，Harness 未阻止它。该事实要求后续对照把 Policy-prompt deviation 单独统计，不能把本 Smoke 表述为全面 policy-compliant。
+
+### 后续有限验证的可比性与诊断
+
+- 旧 V1-2 Task 2 `0/3` artifact 的官方 commit、模型、参数、task/trial seed 与当前计划一致，且 debug 也显示 single-Tool-Call recovery；但 artifact 未保存个人仓库 source hash。因此不能把它直接视为与新增 Reserve 源码严格可比的 control。
+- 已准备当前 V1-2 control 与 Reserve 的 Task `2`、各 3-trial 入口；两组 TextRunConfig 除 Agent 名称、`save_to` 外一致，trial seeds 均为 `670487/116739/26225`。新 artifact 分别为 `retail-v1-2-current-control-task2-t3` 与 `retail-v1-2-reserve-closure-task2-t3`。
+- 当前 trajectory 没有结构化 `guard_intercepted` 字段，不能仅靠结果文件可靠计数 guard 事件。最小只读方案是：仅当 trajectory 出现精确 fallback 文本，且相邻 Agent `llm_debug` response 提议一个 mutation Tool Call 时，才报告一次 guard interception；不改变 Agent 行为。该方法仍依赖保存的 verbose debug artifact，应报告为诊断关联而非 Harness 原生指标。
+
+## 2026-10-27 — V1-2 Reserve 最终 Task 2 限定对照（各 3 trials）
+
+### 范围与可比性
+
+- **Control artifact：** `../tau2-bench/data/simulations/retail-v1-2-current-control-task2-t3/results.json`；Agent `ecommerce_after_sales_v1_2`。
+- **Reserve artifact：** `../tau2-bench/data/simulations/retail-v1-2-reserve-closure-task2-t3/results.json`；Agent `ecommerce_after_sales_v1_2_reserve`。
+- 两组均为 Retail `base`、Task `2`、3 trials、run seed `42`、trial seed `670487/116739/26225`、Agent/User `openai/gpt-4.1-mini`、双方 `temperature=0.0`、`max_steps=30`、`max_errors=10`、`max_retries=0`、`max_concurrency=1`、`workers=0`、verbose LLM debug 与相同 Judge 配置。入口预检确认除 Agent 名称和 `save_to` 外，`TextRunConfig` 一致。因此它是当前代码快照下的有限机制对照；仍不构成完整 Retail Benchmark 或 provider 确定性的证明。
+
+### 按 seed 对齐的结果
+
+`MAX_STEPS` 不进入正常评分，所以 DB/Action/NL 显示为未评分。`A/U` 为可见 Agent/User LLM debug calls；`T` 为提交给 Environment 的 Tool Call 数。每条 Agent response 最多一个 Tool Call，所有 Agent request 均传入 `parallel_tool_calls=false`，没有 `multi_tool_retry` 或 Infra Error。
+
+| seed / trial | 当前 V1-2 control | V1-2 Reserve |
+| --- | --- | --- |
+| `670487` / 0 | Reward `0`；`USER_STOP`；24 条 trajectory messages；A/U/T=`11/5/7`；DB `0`、NL `1/1` | Reward `0`；`MAX_STEPS`；31 条 messages；A/U/T=`15/8/7`；未评分 |
+| `116739` / 1 | Reward `0`；`MAX_STEPS`；31 条 messages；A/U/T=`15/8/7`；未评分 | Reward `0`；`MAX_STEPS`；32 条 messages；A/U/T=`15/9/7`；未评分 |
+| `26225` / 2 | Reward `0`；`MAX_STEPS`；32 条 messages；A/U/T=`15/9/7`；未评分 | Reward `0`；`USER_STOP`；26 条 messages；A/U/T=`12/6/7`；DB `0`、NL `1/1` |
+
+两组均为 `0/3` 成功、各 2 次 `MAX_STEPS`、各 1 次 `USER_STOP`（但 DB 均为 `0`）。这不能支持 Reserve 降低 cap 或提升 Task 2 完成率的结论。
+
+### 失败归因与 Guard 证据
+
+- **Control trial 0（`USER_STOP`、DB `0`）：** Agent 正确认证并报告“12 个 variants、10 个 available”，随后读取三个由 User 指定但不符合目标的订单；它们分别为 pending/cancelled/pending，均不能 return。没有读取目标 delivered order `#W2378156`，也没有调用 `return_delivered_order_items`。各 read Tool Result 正常返回，故 Action Check 未完全匹配或 DB `0` 不能解释为 Tool Error；直接原因是对话在未定位可退订单时由 User 正常结束。
+- **Reserve trial 2（`USER_STOP`、DB `0`）：** 同样正确完成库存回答和认证，并读取三个非目标订单，随后转入通知/优惠等非 return 话题而 `USER_STOP`。未生成 return write；Tool Result 未显示执行异常。故 DB `0` 是未完成目标 write 的结果，不是 Action Check 本身造成的评分错误。
+- **Reserve trial 0（`MAX_STEPS`）：** 已定位 delivered 的 `#W2378156`，并向 User 列出 return details、请求明确确认；cap 在收到该确认前触发，尚未产生 mutation Tool Call。这里的确认 turn 由 Retail Policy 的 write 前明确确认要求所需，不能把省略它视为合法优化。
+- **Reserve trial 1（`MAX_STEPS`）：** User 多次提供不存在的订单号；Agent 对这些 id 的 `get_order_details` 返回 `Error: Order not found`，并继续请求核实。到 cap 时仍未获得可执行的正确订单/完整写入前提。它们是可恢复的业务查询失败，而非 Runner Infra Error。
+- **真实 Guard 触发：0 次。** 三条 Reserve trajectory 均未出现精确 fallback 文本，且 debug 中没有“模型提出单一 mutation Tool Call、随后被 Guard 改为 fallback”的关联证据。Reserve trial 0 在可调用 write 前就触顶；trial 1、2 没有形成合规的 mutation 候选。因此本轮没有验证 Guard 的阻止路径，也不能以它解释两次 `MAX_STEPS`。
+
+### Budget、Grounding、成本与限制
+
+- 两组真实 Agent debug request 都含本地 `<step_budget>`；Reserve 也含 Reserve instruction。上限轨迹的本地估计走至 `estimated_steps_used=30` / remaining `0`，没有观察到重复输入导致的明显双重扣减。该数字仍是 Agent 的 fresh-run 重构，不是 Harness 实时计数。
+- Product Tool Result 后的后续 request 含 availability Grounding；两组正常评分条目的 NL assertion 都确认“10 个 available”。这验证的是 Grounding 的事实输出，不验证 Reserve 对写入成功率的作用。
+- Control / Reserve 的 Agent debug records 分别为 `41/42` calls、`221,843/241,392` prompt tokens、`1,794/2,045` completion tokens、Agent Cost `$0.0574700/$0.0568976`；`results.json` User Cost 为 `$0.0087808/$0.0095516`；可见 NL Judge 为各 1 次，Cost `$0.0027968/$0.0032423`。总 duration 为 `146.89 s/85.23 s`，受 provider latency 影响，不应解释为机制性能。`results.json` 的 `agent_cost` 和 `agent_usage` 仍为 `null`，不能视为零；未见 semantic communication Judge 或 auto-review 的调用证据。
+- 本限定实验没有出现 write Tool Call，因而不能测量“remaining 3/4/5 时 Guard 是否正确放行或拦截 mutation”。它也不能排除不同 User Simulator/模型对话分支的影响。
+
+### V1-2 阶段结论
+
+- **已验证：** 本地 Budget Context、`parallel_tool_calls=false` 和单 Tool Call 安全路径可真实运行；此前 Smoke 验证 remaining=`4` 的 write 放行和正常收尾；本次无 Infra Error，Grounding 仍可正确支持库存事实回答。
+- **未证明效果：** Budget Prompt 和 4-step Reserve 均未在当前 Task 2 的有限对照中降低 `MAX_STEPS` 或增加 DB success；Guard 的真实拦截路径仍无证据。
+- **未发现确定性代码 Bug：** artifact 未显示多 Tool Call、计数重复或 Tool 执行异常。主要限制是单 Tool Call + 30-step cap 下的多轮认证、订单定位和 write-confirmation 路径，以及 LLM/User Simulator 选择的对话分支。它们不是当前证据可由 Task 2 特化规则安全修复的问题。
+
+建议将 V1-2 Reserve 在本轮阶段性结束：保留源码、Mock 边界测试和 artifact，但不继续为同一策略付费复测。下一阶段先进入 Evaluation / Golden Tests / Observability：冻结版本与配置清单；把已观察到的认证、库存、错误订单、write-confirmation 与 max-step 边界构造成无 API Golden/pytest cases；为正式对照统一采集 source revision、termination、Tool Call、Policy-prompt deviation、Token、cost 和 latency。之后再决定是否有新的失败证据足以支持另一项机制。

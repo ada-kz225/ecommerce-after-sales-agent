@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 已完成一次真实 Retail Smoke Test 和固定 Tasks `0–4` 的首次 Pilot；阶段 3B 的 V1-1 Availability-aware Factual Grounding 已完成首次真实 Pilot 及修复后的重复验证。
-- **当前进度：** 已完成官方 Retail Smoke Test、官方 5-task Pilot Baseline、官方源码梳理、个人 V0 的 Task `0` Smoke Test / 5-task Pilot，以及 V1 availability grounding 的去重/过期事实修复、单元测试、首次真实 5-task Pilot 和修复后两组 3-trial 对照。详见 [实验记录](docs/EXPERIMENT_LOG.md)：在针对性的 Tasks `2–4` 重复实验中，V1 为 `7/9`、V0 为 `0/9`，可评分 NL assertion 为 `8/8` 对 `0/8`；这是目标机制的正向证据，不是完整 Benchmark 或稳定性能结论。
-- **下一步：** 保留 Tasks `0–1` 作为换货回归 sentinel；依据 Task 2 的 `max_steps` 失败，进入 V1-2 Step-budget-aware Planning 的最小设计与无 API 测试。修复前后 artifact 必须分开记录，后续真实对照继续保留 Agent/User/Judge usage 与成本边界。
+- **当前阶段：** 阶段 2 已完成；阶段 3A 的 V0 已完成真实 Smoke/Pilot；阶段 3B 的 V1-1 Availability-aware Factual Grounding 已完成重复验证。V1-2 Step Budget / Reserve 已完成最小实现、Smoke 和限定对照，并阶段性结束。
+- **当前进度：** 已完成官方 Retail Smoke Test、官方 5-task Pilot Baseline、官方源码梳理、个人 V0 的 Task `0` Smoke Test / 5-task Pilot，以及 V1 availability grounding 的去重/过期事实修复、单元测试、首次真实 5-task Pilot 和修复后两组 3-trial 对照。详见 [实验记录](docs/EXPERIMENT_LOG.md)：在针对性的 Tasks `2–4` 重复实验中，V1 为 `7/9`、V0 为 `0/9`，可评分 NL assertion 为 `8/8` 对 `0/8`；这是目标机制的正向证据，不是完整 Benchmark 或稳定性能结论。Budget Prompt/Reserve 未显示收益：当前 Task `2` 的 V1-2 control/Reserve 均为 `0/3`、各 2 次 `MAX_STEPS`。Reserve Smoke 验证了 remaining=`4` 的 write 允许路径；真实 mutation 拦截路径尚未出现。
+- **下一步：** 进入阶段 4 的最小准备：冻结可比较的 Agent/配置清单，建立无 API Golden Tests，并统一记录 source revision、termination、Tool Call、Policy-prompt deviation、Token、cost 与 latency。保留 Tasks `0–1` 作为换货回归 sentinel；只有出现新的、可复现的失败证据时再排期下一项 Agent 机制。
 
 ## Milestone 总览
 
@@ -94,8 +94,12 @@
 - [x] 修复 V0/V1 的 Harness seed 传递和 Retail text message/requestor compatibility，并以 Mock 回归验证；该修复可能改变后续 LLM 行为，修复后实验须使用新 artifact。
 - [x] 以修复后 V0/V1 完成 Tasks `0–1`、各 3 trials 的换货对照（V0 `4/6`、V1 `5/6`）；确认所有真实 Agent LLM request 携带相应 trial seed。结果不足以证明稳定提升或排除更广泛回归。
 - [x] 在相同修复后配置下，对 Tasks `2–4` 完成多 trial V0/V1 Grounding stability 对照；V0 `0/9`、V1 `7/9`，可评分 NL assertion 为 V0 `0/8`、V1 `8/8`。结果仅适用于该固定小样本，详见实验记录。
-- [x] 基于重复实验与官方 Harness step 规则，确定可研究 **step-budget-aware planning and completion**；仅完成设计评估，尚未编码或进行真实验证。
-- [ ] 先确认不改官方 Harness 时 Agent 获得/保守估计剩余 step 的契约，再为 V1-2 实现最小的 budget context，并以 Mock 轨迹验证低预算时的读操作合并/完成优先级；不得绕过 Harness、用户确认或 Tool 执行边界。
+- [x] 基于重复实验与官方 Harness step 规则，完成独立 V1-2 的本地 Budget Context、single-Tool-Call safety guard 及 Mock 回归；V1-2 不读取 Harness 实时 `step_count`，只维护 fresh text run 的本地估计。
+- [x] 修复 V1-2 首次 Pilot 的 `MultipleToolCallsError`：使用 `parallel_tool_calls=false`、至多一次安全重新生成与不含 Tool Call 的最终降级；随后 Task 2 Smoke 无 Infra Error，9-trial 合规对照也无 Infra Error。
+- [x] 完成 V1-1 compliant 与 V1-2 的 Tasks `2–4`、各 3-trial 真实对照：V1-1 compliant `3/9`、4 次 `MAX_STEPS`；V1-2 `2/9`、6 次 `MAX_STEPS`。两组已评分 NL assertion 均正确；V1-2 未显示预期收益，详见实验记录。
+- [x] 在不跳过 authentication、order validation 或 write confirmation 的前提下，实现独立 V1-2 Reserve：为 mutation Tool Call 预留 write Tool Result/正常收尾预算，并以 Mock trajectory 验证临界路径；不把本地估计写成 Harness 实时计数。
+- [x] 以 Task `2` 单 trial 完成 Reserve 允许路径 Smoke：remaining=`4` 时 return write、Tool Result、completion 与 `USER_STOP` 均真实发生，Reward `1.0`；预算不足的拦截分支仍仅由 Mock 验证。
+- [x] 执行当前 V1-2 control 与 Reserve 的 Task `2`、各 3-trial 有限对照：两组均 `0/3`、各 2 次 `MAX_STEPS`、无 Infra Error；真实 Guard mutation-intercept 未触发。该机制未证明收益，阶段性结束，详见实验记录。
 - [ ] Tool Error 结构化恢复、重复失败 Tool Call 检测/合理终止、写操作前 confirmation / permission 检查与关键写操作后状态验证，待出现 V0 对应失败证据后再排序选择。
 - [ ] 为每项选定机制编写测试，并保留触发它的失败案例或最小复现。
 - [ ] 扩大或重复可比的 V0 / V1 对照，记录收益、Tasks `0`/`1` 回归是否复现、Agent/User/Judge 代价和局限性。
@@ -103,7 +107,7 @@
 
 **验收标准：** V1 的每项增强有可运行测试；对照实验不将单次随机结果表述为稳定提升。
 
-**当前状态：** 3A 的固定响应 Agent、V0 Mock 接口测试、真实 Task `0` Smoke Test 与首次可比的 5-task Pilot 均已完成；3B 的 availability grounding 已完成去重/过期事实修复、Mock 回归、首次真实 V1 Pilot（`3/5`）、修复后 Tasks `0–1` 的 3-trial 对照（V0 `4/6`、V1 `5/6`），以及修复后 Tasks `2–4` 的 3-trial 对照（V0 `0/9`、V1 `7/9`）。后者提供了 availability NL assertion 的重复正向证据，但未证明全 Retail Benchmark 提升；换货路径仍有静态目标 mismatch 的随机分支。下一项是 V1-2 的最小 Step Budget 实现与无 API 测试。
+**当前状态：** 3A 的固定响应 Agent、V0 Mock 接口测试、真实 Task `0` Smoke Test 与首次可比的 5-task Pilot 均已完成；3B 的 availability grounding 已完成去重/过期事实修复、Mock 回归、首次真实 V1 Pilot（`3/5`）、修复后 Tasks `0–1` 的 3-trial 对照（V0 `4/6`、V1 `5/6`），以及修复后 Tasks `2–4` 的 3-trial 对照（V0 `0/9`、V1 `7/9`）。后者提供了 availability NL assertion 的重复正向证据，但未证明全 Retail Benchmark 提升；换货路径仍有静态目标 mismatch 的随机分支。V1-2 Reserve 的 Smoke 验证了 remaining=`4` 的允许路径，但当前 Task `2` 的配对对照为 `0/3` 对 `0/3`，没有证明 Step Budget/Reserve 收益，也未触发真实 mutation Guard。阶段 3B 暂停新增机制，转入阶段 4 的评测、Golden Tests 与可观测性基础工作。
 
 ## 4. Evaluation 与可靠性测试（必做）
 
@@ -120,7 +124,7 @@
 
 **验收标准：** 有一份可复跑的对比结果，包含 Baseline 与自定义 Agent 的相同指标、Golden Set 结果、回归测试结果及成本/延迟分析。
 
-**当前状态：** 未开始。
+**当前状态：** 待开始最小实施。优先完成可复现配置/源码版本记录、无 API Golden Tests 与统一结果指标采集，再决定是否进行新的付费对照实验。
 
 ## 5. RAG 扩展（可选）
 
