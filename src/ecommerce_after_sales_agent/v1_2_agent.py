@@ -17,11 +17,12 @@ from tau2.data_model.message import (
 from tau2.environment.tool import Tool
 from tau2.utils.llm_utils import generate
 
+from .tool_call_recovery import generate_with_single_tool_call_recovery
 from .v1_agent import V1Agent, VariantAvailabilityFact
 
 
 class MultipleToolCallsError(ValueError):
-    """LLM 在 Retail 单 Tool Call policy 下返回多个 Tool Call。"""
+    """保留异常类型以兼容旧调用方；V1-2 不再将其抛给 Runner。"""
 
 
 # 除了history 和 fact 之外，额外保存step预算状态
@@ -182,20 +183,14 @@ class V1_2Agent(V1Agent):
         if grounding_message is not None:
             context.append(grounding_message)
         context.append(self._budget_message(state))
-        response = generate(
+        response = generate_with_single_tool_call_recovery(
+            generate_fn=generate,
             model=self.llm,
             tools=self.tools,
             messages=context + state.messages,
+            llm_args=self.llm_args,
             call_name="ecommerce_after_sales_v1_2",
-            **self.llm_args,
         )
-        if not isinstance(response, AssistantMessage):
-            raise TypeError("V1-2 Agent LLM response must be an AssistantMessage")
-        response.validate()
-        if response.tool_calls and len(response.tool_calls) > 1:
-            raise MultipleToolCallsError(
-                "Retail policy allows at most one Tool Call per turn; refusing to execute a multi-call response"
-            )
         state.messages.append(response)
         return response, state
 

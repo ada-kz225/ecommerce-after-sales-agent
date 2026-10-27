@@ -17,11 +17,7 @@ from tau2.data_model.simulation import TerminationReason
 from tau2.runner.build import build_agent
 
 from ecommerce_after_sales_agent.registration import register_v1_2_agent
-from ecommerce_after_sales_agent.v1_2_agent import (
-    MultipleToolCallsError,
-    V1_2Agent,
-    create_v1_2_agent,
-)
+from ecommerce_after_sales_agent.v1_2_agent import V1_2Agent, create_v1_2_agent
 import ecommerce_after_sales_agent.v1_2_agent as v1_2_module
 
 
@@ -281,24 +277,117 @@ def test_unconfirmed_write_is_not_created_by_budget_context(
     assert not any(isinstance(message, ToolMessage) for message in state.messages)
 
 
-def test_multi_tool_llm_response_is_explicitly_rejected_without_execution(
+def test_single_tool_call_is_returned_without_a_recovery_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = create_v1_2_agent([], "Policy", llm="mock/model")
     state = agent.get_init_state([_opening()])
     response = AssistantMessage(
         role="assistant",
-        tool_calls=[
-            ToolCall(id="a", name="read_a", arguments={}),
-            ToolCall(id="b", name="read_b", arguments={}),
-        ],
+        tool_calls=[ToolCall(id="a", name="read_a", arguments={})],
     )
-    _install_mock_generate(monkeypatch, response)
+    calls = _install_mock_generate(monkeypatch, response)
 
-    with pytest.raises(MultipleToolCallsError, match="at most one Tool Call"):
-        agent.generate_next_message(UserMessage.text("Read orders"), state)
+    actual, state = agent.generate_next_message(UserMessage.text("Read orders"), state)
 
-    assert response not in state.messages
+    assert actual is response
+    assert len(calls) == 1
+    assert calls[0]["parallel_tool_calls"] is False
+    assert response in state.messages
+    assert not any(isinstance(message, ToolMessage) for message in state.messages)
+
+
+def test_multi_tool_response_retries_once_and_returns_only_the_compliant_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v1_2_agent([], "Policy", llm="mock/model")
+    state = agent.get_init_state([_opening()])
+    first = AssistantMessage(
+        role="assistant",
+        tool_calls=[
+            ToolCall(id="bad-a", name="read_a", arguments={}),
+            ToolCall(id="bad-b", name="read_b", arguments={}),
+        ],
+        cost=0.1,
+        usage={"prompt_tokens": 10, "completion_tokens": 2},
+        generation_time_seconds=0.2,
+    )
+    second = AssistantMessage(
+        role="assistant",
+        tool_calls=[ToolCall(id="good", name="read_a", arguments={})],
+        cost=0.2,
+        usage={"prompt_tokens": 12, "completion_tokens": 3},
+        generation_time_seconds=0.3,
+    )
+    responses = iter([first, second])
+    calls: list[dict] = []
+
+    def fake_generate(**kwargs: object) -> AssistantMessage:
+        calls.append(kwargs)
+        return next(responses)
+
+    monkeypatch.setattr(v1_2_module, "generate", fake_generate)
+    actual, state = agent.generate_next_message(UserMessage.text("Read orders"), state)
+
+    assert actual.tool_calls == [ToolCall(id="good", name="read_a", arguments={})]
+    assert len(calls) == 2
+    assert all(call["parallel_tool_calls"] is False for call in calls)
+    assert any(
+        "rejected before any tool execution" in (message.content or "")
+        for message in calls[1]["messages"]
+        if message.role == "system"
+    )
+    assert first not in state.messages
+    assert state.messages[-1] is actual
+    assert actual.cost == pytest.approx(0.3)
+    assert actual.usage == {"prompt_tokens": 22, "completion_tokens": 5}
+    assert actual.generation_time_seconds == pytest.approx(0.5)
+    assert state.decision_count == 1
+    assert not any(isinstance(message, ToolMessage) for message in state.messages)
+
+
+def test_two_multi_tool_responses_safely_fall_back_without_executing_or_polluting_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = create_v1_2_agent([], "Policy", llm="mock/model")
+    state = agent.get_init_state([_opening()])
+    first = AssistantMessage(
+        role="assistant",
+        tool_calls=[
+            ToolCall(id="write-a", name="write", arguments={}),
+            ToolCall(id="write-b", name="write", arguments={}),
+        ],
+        cost=0.1,
+        usage={"prompt_tokens": 10, "completion_tokens": 2},
+    )
+    second = AssistantMessage(
+        role="assistant",
+        tool_calls=[
+            ToolCall(id="write-c", name="write", arguments={}),
+            ToolCall(id="write-d", name="write", arguments={}),
+        ],
+        cost=0.2,
+        usage={"prompt_tokens": 12, "completion_tokens": 3},
+    )
+    responses = iter([first, second])
+    calls: list[dict] = []
+
+    def fake_generate(**kwargs: object) -> AssistantMessage:
+        calls.append(kwargs)
+        return next(responses)
+
+    monkeypatch.setattr(v1_2_module, "generate", fake_generate)
+    actual, state = agent.generate_next_message(UserMessage.text("Make a change"), state)
+
+    assert len(calls) == 2
+    assert actual.tool_calls is None
+    assert "No new tool action was performed for this turn" in (actual.content or "")
+    assert actual.cost == pytest.approx(0.3)
+    assert actual.usage == {"prompt_tokens": 22, "completion_tokens": 5}
+    assert first not in state.messages and second not in state.messages
+    assert state.messages[-1] is actual
+    assert state.decision_count == 1
+    assert state.estimated_steps_used == 2
     assert not any(isinstance(message, ToolMessage) for message in state.messages)
 
 
